@@ -17,7 +17,7 @@ extra-source-files:  ChangeLog.md
 cabal-version:       >=1.10
 
 library
-  exposed-modules:     CFG, Test, CFG.Plugin
+  exposed-modules:     CFG, Test
   -- other-modules:
   -- other-extensions:
   build-depends:       base >=4.9 && <5
