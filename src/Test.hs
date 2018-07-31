@@ -1,14 +1,20 @@
 {-# language TemplateHaskell #-}
 
-{- options_ghc
-  -fplugin CFG.Plugin
-  -fplugin-opt CFG.Plugin:a
--}
 module Test where
 
 import CFG
 
-data Boo = A | B
+parseA :: String -> Maybe (String, Char)
+parseA = $(makeParser (Char () 'a'))
 
-thingo :: String -> Maybe (String, Char)
-thingo = $(makeParser brackets)
+parseAs :: String -> Maybe (String, [Char])
+parseAs = $(makeParser (many $ Char () 'a'))
+
+parseAorB :: String -> Maybe (String, Char)
+parseAorB = $(makeParser (Or () (Char () 'a') (Char () 'b')))
+
+parseAorBs :: String -> Maybe (String, [Char])
+parseAorBs = $(makeParser (many $ Or () (Char () 'a') (Char () 'b')))
+
+parseBrackets :: String -> Maybe (String, ())
+parseBrackets = $(makeParser brackets)

@@ -287,21 +287,13 @@ many c = Mu () $ \x -> Or () (map' (const []) [|| (const []) ||] $ Empty ()) (ma
 some :: Lift a => CFG () v c a -> CFG () v c [a]
 some c = map' (:) [|| (:) ||] c <.> many c
 
--- | T → ε | "(" S ")" T
--- | S → ε | "(" T ")" S
-brackets :: CFG () v Char Int
+-- | T → ε | "(" T ")" T
+brackets :: CFG () v Char ()
 brackets =
   Mu () $ \t ->
   Or ()
-    (map' (const 1) [|| const 1 ||] $ Empty ())
-    (map' (const (*)) [|| const (*) ||] (Char () '(') <.>
-     (map' (+1) [|| (+1) ||] $
-      Mu () $ \s ->
-      Or ()
-        (map' (const 0) ([|| const 0 ||]) $ Empty ())
-        (map' (*) [|| (*) ||] (map' (const (+1)) [|| const (+1) ||] (Char () '(') <.> Var () t <. Char () ')') <.> Var () s)) <.
-      Char () ')' <.>
-     Var () t)
+    (Empty ())
+    (Char () '(' .> Var () t <. Char () ')' <. Var () t)
 
 data IR var c a where
   IR_Pure :: Ty c -> Code a -> IR var c a
@@ -321,7 +313,7 @@ ir_str e =
     IR_Pure a _ -> "pure"
     IR_Bot a -> "bot"
     IR_Or a _ -> "or"
-    IR_Empty a -> "empt"
+    IR_Empty a -> "empty"
     IR_Char a _ -> "char"
     IR_Seq a _ _ -> "seq"
     IR_NotNull a _ -> "notnull"
@@ -378,8 +370,7 @@ go_staged
   -> Context c
   -> IR Var c a
   -> Code ([c] -> Maybe ([c], a))
-go_staged supply context e = do
-  runIO (putStrLn ("go" ++ show (length context) ++ ir_str e))
+go_staged supply context e =
   case e of
     IR_Pure _ a -> [|| \cs -> Just (cs, $$(a)) ||]
     IR_Bot _ -> [|| \_ -> Nothing ||]
@@ -409,25 +400,10 @@ go_staged supply context e = do
       unsafeTExpCoerce (context !! n)
 
     IR_Mu ty f
-      | s:supply' <- supply -> do
-        mkDecl supply context f-- go_staged supply' context (f t))
+      | s:supply' <- supply ->
+          [|| let x = $$(go_staged supply' (unTypeQ [|| x ||] : context) (f $ MkVar s)) in x ||]
 
       | otherwise -> error "impossible"
-
-mkDecl :: (Eq c, Lift c) => [Int] -> Context c -> (Var c a -> IR Var c a) -> Code ([c] -> Maybe ([c],a))
-mkDecl (s:s') context f = do
-  x <- newUniqueName ("x" ++ show s)
-  let x_var = varE x
-  let body = normalB . unTypeQ $ go_staged s' (x_var : context) (f (MkVar s))
-  d <- funD x [(clause [] body [])]
-  addTopDecls [d]
-  unsafeTExpCoerce x_var
-mkDecl _ _ _ = error "impossible"
-
-newUniqueName :: Quasi q => String -> q Name
-newUniqueName str = do
-  n <- qNewName str
-  qNewName $ show n
 
 ir_ors :: forall c a . (Lift c, Eq c)
        => [Int] -> Context c
@@ -443,7 +419,7 @@ ir_ors supply context as = foldl' comb [|| \_ -> Nothing ||] as
           n = _null (irAnn ta)
       in
       [|| \str ->
-                      case str of
-                        c:_ | c `elem` r ->  $$(go_staged supply context ta) str
-                        []  | n -> $$(go_staged supply context ta) str
-                        _ -> $$(f2) str ||]
+            case str of
+              c:_ | c `elem` r ->  $$(go_staged supply context ta) str
+              []  | n -> $$(go_staged supply context ta) str
+              _ -> $$(f2) str ||]
