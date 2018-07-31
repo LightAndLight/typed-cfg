@@ -4,6 +4,7 @@
 {-# language StandaloneDeriving #-}
 {-# language ExistentialQuantification, FlexibleInstances #-}
 {-# language ScopedTypeVariables #-}
+{-# language DeriveLift #-}
 
 {-# language TemplateHaskell #-}
 
@@ -78,7 +79,7 @@ data Ty c
   , _first :: [c]
   , _followLast :: [c]
   , _guarded :: Bool
-  } deriving (Eq, Show, Functor, Foldable, Traversable)
+  } deriving (Eq, Show, Functor, Foldable, Traversable, Lift)
 
 (#) :: Eq c => Ty c -> Ty c -> Bool
 (#) t t' = not (_null t && _null t') && null (_first t `intersect` _first t')
@@ -371,7 +372,15 @@ makeParser = unTypeQ . go <=< toIR <=< either (fail . show) pure . typeOf
              $$( go b ) x' >>= \(x'', b') ->
              pure (x'', a' b') ||]
         IR_NotNull _ a -> go a
---        IR_Map _ f a -> let a' = go a in _
+        IR_Map ty f a ->
+          let ft = _first ty
+              n  = _null ty
+          in
+            [|| \str -> case str of
+                          c:_ | c `elem` _first ty -> fmap $$(uncurry_c f) <$> ($$(go a) str)
+                          [] | _null ty -> fmap $$(uncurry_c f) <$> $$(go a) str
+                          _ -> Nothing ||]
+
         _ -> undefined
 
     ir_ors :: (Lift c, Eq c)
