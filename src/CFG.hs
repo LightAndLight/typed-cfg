@@ -58,7 +58,7 @@ cfgAnn e =
     Mu a _ -> a
     Map a _ _ _ -> a
 
-map' :: (a -> b) -> (Code (a -> b)) -> CFG () var c a -> CFG () var c b
+map' :: (a -> b) -> Code (a -> b) -> CFG () var c a -> CFG () var c b
 map' = Map ()
 
 (<.>) :: CFG () var c (a -> b) -> CFG () var c a -> CFG () var c b
@@ -347,9 +347,8 @@ toIR e = case e of
 makeParser
   :: (Lift a, Lift c, Eq c, Show c)
   => CFG () Var c a
-  -- Code ([c] -> Maybe ([c], a)))
-  -> Q Exp
-makeParser = unTypeQ . go <=< toIR <=< either (fail . show) pure . typeOf
+  -> Code ([c] -> Maybe ([c], a))
+makeParser = go <=< toIR <=< either (fail . show) pure . typeOf
   where
     go
       :: (Lift c, Eq c)
@@ -377,9 +376,9 @@ makeParser = unTypeQ . go <=< toIR <=< either (fail . show) pure . typeOf
               n  = _null ty
           in
             [|| \str -> case str of
-                          c:_ | c `elem` _first ty -> fmap $$(uncurry_c f) <$> ($$(go a) str)
-                          [] | _null ty -> fmap $$(uncurry_c f) <$> $$(go a) str
-                          _ -> Nothing ||]
+                  c:_ | c `elem` _first ty -> fmap $$(uncurry_c f) <$> ($$(go a) str)
+                  [] | _null ty -> fmap $$(uncurry_c f) <$> $$(go a) str
+                  _ -> Nothing ||]
 
         _ -> undefined
 
@@ -395,8 +394,8 @@ makeParser = unTypeQ . go <=< toIR <=< either (fail . show) pure . typeOf
           let r = _first (irAnn ta)
               n = _null (irAnn ta)
           in
-          [|| \str ->
-                          case str of
-                            c:_ | c `elem` r ->  $$(go ta) str
-                            []  | n -> $$(go ta) str
-                            _ -> $$(f2) str ||]
+            [|| \str ->
+                  case str of
+                    c:_ | c `elem` r ->  $$(go ta) str
+                    []  | n -> $$(go ta) str
+                    _ -> $$(f2) str ||]
