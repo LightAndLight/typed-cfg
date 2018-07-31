@@ -354,15 +354,11 @@ toIR e = case e of
 
 type Context c = [ExpQ]
 
-fix :: (a -> a) -> a
-fix f = let x = f x in x
-
 makeParser
   :: (Lift a, Lift c, Eq c, Show c)
   => CFG () Var c a
-  -- Code ([c] -> Maybe ([c], a)))
-  -> Q Exp
-makeParser = unTypeQ . go_staged [0..] [] <=< either (fail . show) (pure . toIR) . typeOf
+  -> Code ([c] -> Maybe ([c], a))
+makeParser = go_staged [0..] [] <=< either (fail . show) (pure . toIR) . typeOf
 
 go_staged
   :: (Lift c, Eq c)
@@ -383,7 +379,8 @@ go_staged supply context e =
     IR_Or _ bs -> ir_ors supply context bs
     IR_Empty _ -> [|| \x -> Just (x, ()) ||]
     IR_Seq _ a b -> do
-      [|| \x -> $$( go_staged supply context a ) x >>= \(x', a') ->
+      [|| \x ->
+         $$( go_staged supply context a ) x >>= \(x', a') ->
          $$( go_staged supply context b ) x' >>= \(x'', b') ->
          pure (x'', a' b') ||]
     IR_NotNull _ a -> go_staged supply context a
@@ -391,10 +388,13 @@ go_staged supply context e =
       let ft = _first ty
           n  = _null ty
       in
-        [|| \str -> case str of
-                      c:_ | c `elem` _first ty -> fmap $$(uncurry_c f) <$> ($$(go_staged supply context a) str)
-                      [] | _null ty -> fmap $$(uncurry_c f) <$> ($$(go_staged supply context a) str)
-                      _ -> Nothing ||]
+        [|| \str ->
+            case str of
+              c : _ | c `elem` _first ty -> fmap $$(uncurry_c f) <$> ($$(go_staged supply context a) str)
+              _ ->
+                if _null ty
+                then fmap $$(uncurry_c f) <$> ($$(go_staged supply context a) str)
+                else Nothing ||]
 
     IR_Var ty (MkVar n) ->
       unsafeTExpCoerce (context !! n)
@@ -405,21 +405,31 @@ go_staged supply context e =
 
       | otherwise -> error "impossible"
 
-ir_ors :: forall c a . (Lift c, Eq c)
-       => [Int] -> Context c
-       -> NonEmpty (IR Var c a) -> Code ([c] -> Maybe ([c], a))
-ir_ors supply context as = foldl' comb [|| \_ -> Nothing ||] as
+ir_ors
+  :: forall c a
+  . (Lift c, Eq c)
+  => [Int]
+  -> Context c
+  -> NonEmpty (IR Var c a)
+  -> Code ([c] -> Maybe ([c], a))
+ir_ors supply context as =
+  let
+    fallThrough =
+      case filter (_null . irAnn) (toList as) of
+        [] -> [|| \_ -> Nothing ||]
+        a : _ -> go_staged supply context a
+  in
+    [|| \str -> case str of
+        c : _ -> $$(foldr comb [|| \_ -> $$(fallThrough) ||] as) c str
+        _ -> $$(fallThrough) str ||]
   where
-    comb :: (Lift c, Eq c)
-            => Code ([c] -> Maybe ([c], a))
-            -> IR Var c a
-            -> Code ([c] -> Maybe ([c], a))
-    comb f2 ta =
-      let r = _first (irAnn ta)
-          n = _null (irAnn ta)
+    comb
+      :: (Lift c, Eq c)
+      => IR Var c a
+      -> Code (c -> [c] -> Maybe ([c], a))
+      -> Code (c -> [c] -> Maybe ([c], a))
+    comb ta f2 =
+      let
+        r = _first (irAnn ta)
       in
-      [|| \str ->
-            case str of
-              c:_ | c `elem` r ->  $$(go_staged supply context ta) str
-              []  | n -> $$(go_staged supply context ta) str
-              _ -> $$(f2) str ||]
+      [|| \c -> if c `elem` r then $$(go_staged supply context ta) else $$(f2) c ||]
