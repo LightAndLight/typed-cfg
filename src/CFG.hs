@@ -23,6 +23,8 @@ import Language.Haskell.TH.Jailbreak
 eval' :: forall a. Q (TExp a) -> Q a
 eval' q = eval (unTypeQ q) :: Q a
 
+type Code a = Q (TExp a)
+
 data CFG ann var c a where
   Pure :: Lift a => ann -> a -> CFG ann var c a
   Bot :: ann -> CFG ann var c a
@@ -339,14 +341,14 @@ toIR e = case e of
 makeParser
   :: (Lift a, Lift c, Eq c, Show c)
   => CFG () Var c a
-  -- Q (TExp ([c] -> Maybe ([c], a)))
+  -- Code ([c] -> Maybe ([c], a)))
   -> Q Exp
 makeParser = unTypeQ . go <=< toIR <=< either (fail . show) pure . typeOf
   where
     go
       :: (Lift c, Eq c)
       => IR Var c a
-      -> Q (TExp ([c] -> Maybe ([c], a)))
+      -> Code ([c] -> Maybe ([c], a))
     go e =
       case e of
         IR_Pure _ a -> [|| \cs -> Just (cs, $$( pure a )) ||]
@@ -368,13 +370,13 @@ makeParser = unTypeQ . go <=< toIR <=< either (fail . show) pure . typeOf
         _ -> undefined
 
     ir_ors :: (Lift c, Eq c)
-           => NonEmpty (IR Var c a) -> Q (TExp ([c] -> Maybe ([c], a)))
+           => NonEmpty (IR Var c a) -> Code ([c] -> Maybe ([c], a))
     ir_ors as = foldl' comb [|| \_ -> Nothing ||] as
       where
         comb :: (Lift c, Eq c)
-                => Q (TExp ([c] -> Maybe ([c], a)))
+                => Code ([c] -> Maybe ([c], a))
                 -> IR Var c a
-                -> Q (TExp ([c] -> Maybe ([c], a)))
+                -> Code ([c] -> Maybe ([c], a))
         comb f2 ta =
           let r = _first (irAnn ta)
               n = _null (irAnn ta)
