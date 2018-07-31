@@ -4,6 +4,7 @@
 {-# language StandaloneDeriving #-}
 {-# language ExistentialQuantification, FlexibleInstances #-}
 {-# language ScopedTypeVariables #-}
+{-# language DeriveLift #-}
 
 {-# language TemplateHaskell #-}
 
@@ -23,8 +24,16 @@ import Language.Haskell.TH.Jailbreak
 eval' :: forall a. Q (TExp a) -> Q a
 eval' q = eval (unTypeQ q) :: Q a
 
+type Code a = Q (TExp a)
+
+curry_c :: Code (a -> b) -> Code a -> Code b
+curry_c f a = [|| $$(f) $$(a) ||]
+
+uncurry_c :: (Code a -> Code b) -> Code (a -> b)
+uncurry_c f = [|| \a -> $$(f [|| a ||]) ||]
+
 data CFG ann var c a where
-  Pure :: Lift a => ann -> a -> CFG ann var c a
+  Pure :: ann -> a -> Code a -> CFG ann var c a
   Bot :: ann -> CFG ann var c a
   Or :: ann -> CFG ann var c a -> CFG ann var c a -> CFG ann var c a
   Empty :: ann -> CFG ann var c ()
@@ -33,12 +42,12 @@ data CFG ann var c a where
   NotNull :: ann -> CFG ann var c a -> CFG ann var c a
   Var :: ann -> var c a -> CFG ann var c a
   Mu :: ann -> (var c a -> CFG ann var c a) -> CFG ann var c a
-  Map :: ann -> (a -> b) -> CFG ann var c a -> CFG ann var c b
+  Map :: ann -> (a -> b) -> Code (a -> b) -> CFG ann var c a -> CFG ann var c b
 
 cfgAnn :: CFG a b c d -> a
 cfgAnn e =
   case e of
-    Pure a _ -> a
+    Pure a _ _ -> a
     Bot a -> a
     Or a _ _ -> a
     Empty a -> a
@@ -47,9 +56,9 @@ cfgAnn e =
     NotNull a _ -> a
     Var a _ -> a
     Mu a _ -> a
-    Map a _ _ -> a
+    Map a _ _ _ -> a
 
-map' :: (a -> b) -> CFG () var c a -> CFG () var c b
+map' :: (a -> b) -> (Code (a -> b)) -> CFG () var c a -> CFG () var c b
 map' = Map ()
 
 (<.>) :: CFG () var c (a -> b) -> CFG () var c a -> CFG () var c b
@@ -57,11 +66,11 @@ map' = Map ()
 infixl 4 <.>
 
 (<.) :: CFG () var c a -> CFG () var c b -> CFG () var c a
-(<.) a b = map' (\a b -> a) a <.> b
+(<.) a b = map' (\a b -> a) [|| \a b -> a ||] a <.> b
 infixl 4 <.
 
 (.>) :: CFG () var c a -> CFG () var c b -> CFG () var c b
-(.>) a b = map' (\a b -> b) a <.> b
+(.>) a b = map' (\a b -> b) [|| (\a b -> b) ||]  a <.> b
 infixl 4 .>
 
 data Ty c
@@ -70,7 +79,7 @@ data Ty c
   , _first :: [c]
   , _followLast :: [c]
   , _guarded :: Bool
-  } deriving (Eq, Show, Functor, Foldable, Traversable)
+  } deriving (Eq, Show, Functor, Foldable, Traversable, Lift)
 
 (#) :: Eq c => Ty c -> Ty c -> Bool
 (#) t t' = not (_null t && _null t') && null (_first t `intersect` _first t')
@@ -97,7 +106,7 @@ typeOf :: (Show c, Eq c) => CFG () Var c a -> Either (TyError c) (CFG (Ty c) Var
 typeOf = go [0..] [] False
   where
     go :: (Show c, Eq c) => [Int] -> [Ty c] -> Bool -> CFG () Var c a -> Either (TyError c) (CFG (Ty c) Var c a)
-    go supply ctxt allowGuarded (Pure () a) =
+    go supply ctxt allowGuarded (Pure () a ca) =
       let
         t =
           Ty
@@ -106,7 +115,7 @@ typeOf = go [0..] [] False
           , _followLast = []
           , _guarded = True
           }
-      in pure $ Pure t a
+      in pure $ Pure t a ca
     go supply ctxt allowGuarded (NotNull () g) = do
       g' <- go supply ctxt allowGuarded g
       let t = cfgAnn g'
@@ -169,10 +178,10 @@ typeOf = go [0..] [] False
       let
         t = Ty { _null = False, _first = [c], _followLast = [], _guarded = True }
       in pure (Char t c)
-    go supply ctxt allowGuarded (Map () f a) = do
+    go supply ctxt allowGuarded (Map () f cf a) = do
       a' <- go supply ctxt allowGuarded a
       let t = cfgAnn a'
-      pure (Map t f a')
+      pure (Map t f cf a')
     go (s:supply) ctxt allowGuarded (Mu () f) = do
       res <- fix (\ty -> go supply (cfgAnn ty:ctxt) allowGuarded (f $ MkVar s))
       let t = cfgAnn res
@@ -209,7 +218,7 @@ showCFG = go [0..]
     go (s:supply) (Mu _ f) =
         "mu var" ++ show s ++ ". " ++ go supply (f $ MkVar s)
     go [] (Mu _ f) = error "impossible"
-    go supply (Map _ _ a) = go supply a
+    go supply (Map _ _ _ a) = go supply a
 
 data ParseError c
   = Unexpected c [c]
@@ -223,7 +232,7 @@ parse = go [0..] []
     go :: Eq c => [Int] -> [[c] -> Maybe ([c], ())] -> CFG (Ty c) Var c a -> [c] -> Either (ParseError c) ([c], a)
     go supply ctxt cfg str =
       case cfg of
-        Pure _ a -> Right (str, a)
+        Pure _ a _ -> Right (str, a)
         Bot{} -> Left Bottom
         Or ty a b ->
           let
@@ -261,7 +270,7 @@ parse = go [0..] []
               in
                 f' str
           | otherwise -> error "impossible"
-        Map ty f a
+        Map ty f cf a
           | c:_ <- str, c `elem` _first ty -> fmap f <$> go supply ctxt a str
           | _null ty -> fmap f <$> go supply ctxt a str
           | otherwise ->
@@ -271,10 +280,10 @@ parse = go [0..] []
                 [] -> UnexpectedEof $ _first ta
 
 many :: Lift a => CFG () v c a -> CFG () v c [a]
-many c = Mu () $ \x -> Or () (map' (const []) $ Empty ()) (map' (:) c <.> Var () x)
+many c = Mu () $ \x -> Or () (map' (const []) [|| (const []) ||] $ Empty ()) (map' (:) [|| (:) ||] c <.> Var () x)
 
 some :: Lift a => CFG () v c a -> CFG () v c [a]
-some c = map' (:) c <.> many c
+some c = map' (:) [|| (:) ||] c <.> many c
 
 -- | T → ε | "(" S ")" T
 -- | S → ε | "(" T ")" S
@@ -282,18 +291,18 @@ brackets :: CFG () v Char Int
 brackets =
   Mu () $ \t ->
   Or ()
-    (map' (const 1) $ Empty ())
-    (map' (const (*)) (Char () '(') <.>
-     (map' (+1) $
+    (map' (const 1) [|| const 1 ||] $ Empty ())
+    (map' (const (*)) [|| const (*) ||] (Char () '(') <.>
+     (map' (+1) [|| (+1) ||] $
       Mu () $ \s ->
       Or ()
-        (map' (const 0) $ Empty ())
-        (map' (*) (map' (const (+1)) (Char () '(') <.> Var () t <. Char () ')') <.> Var () s)) <.
+        (map' (const 0) ([|| const 0 ||]) $ Empty ())
+        (map' (*) [|| (*) ||] (map' (const (+1)) [|| const (+1) ||] (Char () '(') <.> Var () t <. Char () ')') <.> Var () s)) <.
       Char () ')' <.>
      Var () t)
 
 data IR var c a where
-  IR_Pure :: Ty c -> TExp a -> IR var c a
+  IR_Pure :: Ty c -> Code a -> IR var c a
   IR_Bot :: Ty c -> IR var c a
   IR_Or :: Ty c -> NonEmpty (IR var c a) -> IR var c a
   IR_Empty :: Ty c -> IR var c ()
@@ -302,7 +311,7 @@ data IR var c a where
   IR_NotNull :: Ty c -> IR var c a -> IR var c a
   IR_Var :: Ty c -> var c a -> IR var c a
   IR_Mu :: Ty c -> (var c a -> Q (IR var c a)) -> IR var c a
-  IR_Map :: Ty c -> (TExp a -> TExp b) -> IR var c a -> IR var c b
+  IR_Map :: Ty c -> (Code a -> Code b) -> IR var c a -> IR var c b
 
 irAnn :: IR b c d -> Ty c
 irAnn e =
@@ -320,7 +329,7 @@ irAnn e =
 
 toIR :: CFG (Ty c) v c a -> Q (IR v c a)
 toIR e = case e of
-  Pure t a -> IR_Pure t <$> [|| a ||]
+  Pure t a ca -> pure $ IR_Pure t ca
   Bot t -> pure $ IR_Bot t
   Or t a b -> IR_Or t <$> traverse toIR (ors a <> ors b)
   Empty t -> pure $ IR_Empty t
@@ -329,9 +338,8 @@ toIR e = case e of
   NotNull t a -> IR_NotNull t <$> toIR a
   Var t v -> pure $ IR_Var t v
   Mu t f -> pure $ IR_Mu t (toIR . f)
-  Map t f (Map _ g a) -> toIR (Map t (f . g) a)
-  Map _ _ _ -> undefined
---  Map t f a -> IR_Map t (_ f) <$> toIR a
+  Map t f cf (Map _ g cg a) -> toIR (Map t (f . g) ([|| $$(cf) . $$(cg) ||]) a)
+  Map t f cf a -> IR_Map t (curry_c cf) <$> toIR a
   where
     ors (Or _ a b) = ors a <> ors b
     ors a = pure a
@@ -339,17 +347,17 @@ toIR e = case e of
 makeParser
   :: (Lift a, Lift c, Eq c, Show c)
   => CFG () Var c a
-  -- Q (TExp ([c] -> Maybe ([c], a)))
+  -- Code ([c] -> Maybe ([c], a)))
   -> Q Exp
 makeParser = unTypeQ . go <=< toIR <=< either (fail . show) pure . typeOf
   where
     go
       :: (Lift c, Eq c)
       => IR Var c a
-      -> Q (TExp ([c] -> Maybe ([c], a)))
+      -> Code ([c] -> Maybe ([c], a))
     go e =
       case e of
-        IR_Pure _ a -> [|| \cs -> Just (cs, $$( pure a )) ||]
+        IR_Pure _ a -> [|| \cs -> Just (cs, $$(a)) ||]
         IR_Bot _ -> [|| \_ -> Nothing ||]
         IR_Char _ c' ->
           [||
@@ -364,17 +372,25 @@ makeParser = unTypeQ . go <=< toIR <=< either (fail . show) pure . typeOf
              $$( go b ) x' >>= \(x'', b') ->
              pure (x'', a' b') ||]
         IR_NotNull _ a -> go a
---        IR_Map _ f a -> let a' = go a in _
+        IR_Map ty f a ->
+          let ft = _first ty
+              n  = _null ty
+          in
+            [|| \str -> case str of
+                          c:_ | c `elem` _first ty -> fmap $$(uncurry_c f) <$> ($$(go a) str)
+                          [] | _null ty -> fmap $$(uncurry_c f) <$> $$(go a) str
+                          _ -> Nothing ||]
+
         _ -> undefined
 
     ir_ors :: (Lift c, Eq c)
-           => NonEmpty (IR Var c a) -> Q (TExp ([c] -> Maybe ([c], a)))
+           => NonEmpty (IR Var c a) -> Code ([c] -> Maybe ([c], a))
     ir_ors as = foldl' comb [|| \_ -> Nothing ||] as
       where
         comb :: (Lift c, Eq c)
-                => Q (TExp ([c] -> Maybe ([c], a)))
+                => Code ([c] -> Maybe ([c], a))
                 -> IR Var c a
-                -> Q (TExp ([c] -> Maybe ([c], a)))
+                -> Code ([c] -> Maybe ([c], a))
         comb f2 ta =
           let r = _first (irAnn ta)
               n = _null (irAnn ta)
