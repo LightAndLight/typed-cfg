@@ -33,7 +33,7 @@ data CFG ann var c a where
   NotNull :: ann -> CFG ann var c a -> CFG ann var c a
   Var :: ann -> var c a -> CFG ann var c a
   Mu :: ann -> (var c a -> CFG ann var c a) -> CFG ann var c a
-  Map :: Lift a => ann -> (a -> b) -> CFG ann var c a -> CFG ann var c b
+  Map :: ann -> (a -> b) -> CFG ann var c a -> CFG ann var c b
 
 cfgAnn :: CFG a b c d -> a
 cfgAnn e =
@@ -49,18 +49,18 @@ cfgAnn e =
     Mu a _ -> a
     Map a _ _ -> a
 
-map' :: Lift a => (a -> b) -> CFG () var c a -> CFG () var c b
+map' :: (a -> b) -> CFG () var c a -> CFG () var c b
 map' = Map ()
 
 (<.>) :: CFG () var c (a -> b) -> CFG () var c a -> CFG () var c b
 (<.>) = Seq ()
 infixl 4 <.>
 
-(<.) :: Lift a => CFG () var c a -> CFG () var c b -> CFG () var c a
+(<.) :: CFG () var c a -> CFG () var c b -> CFG () var c a
 (<.) a b = map' (\a b -> a) a <.> b
 infixl 4 <.
 
-(.>) :: Lift a => CFG () var c a -> CFG () var c b -> CFG () var c b
+(.>) :: CFG () var c a -> CFG () var c b -> CFG () var c b
 (.>) a b = map' (\a b -> b) a <.> b
 infixl 4 .>
 
@@ -330,7 +330,8 @@ toIR e = case e of
   Var t v -> pure $ IR_Var t v
   Mu t f -> pure $ IR_Mu t (toIR . f)
   Map t f (Map _ g a) -> toIR (Map t (f . g) a)
-  Map t f a -> IR_Map t (_ f) <$> toIR a
+  Map _ _ _ -> undefined
+--  Map t f a -> IR_Map t (_ f) <$> toIR a
   where
     ors (Or _ a b) = ors a <> ors b
     ors a = pure a
@@ -363,6 +364,8 @@ makeParser = unTypeQ . go <=< toIR <=< either (fail . show) pure . typeOf
              $$( go b ) x' >>= \(x'', b') ->
              pure (x'', a' b') ||]
         IR_NotNull _ a -> go a
+--        IR_Map _ f a -> let a' = go a in _
+        _ -> undefined
 
     ir_ors :: (Lift c, Eq c)
            => NonEmpty (IR Var c a) -> Q (TExp ([c] -> Maybe ([c], a)))
