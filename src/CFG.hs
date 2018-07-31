@@ -13,7 +13,7 @@ import Unsafe.Coerce
 
 import Control.Monad ((<=<), unless, when)
 import Data.Either (fromRight)
-import Data.List (intersect, union)
+import Data.List (intersect, union, foldl')
 import Data.List.NonEmpty (NonEmpty(..), toList)
 import Data.Traversable (for)
 
@@ -356,35 +356,28 @@ makeParser = unTypeQ . go <=< toIR <=< either (fail . show) pure . typeOf
                c : cs -> if c' == c then Just (cs, c) else Nothing
                [] -> Nothing
           ||]
-        IR_Or _ bs -> do
-          x <- newName "x"
-          c <- newName "c"
-          cs <- newName "cs"
-          is_c_cases <- for bs $ \ir -> do
-            code <- go ir
-            for (_first $ irAnn ir) $ \c' -> do
-              eq <- [| $( pure (VarE c) ) == c' |]
-              pure (NormalG eq, AppE (unType code) (VarE x))
-          null_case <-
-            case filter (_null . irAnn) (toList bs) of
-              -- No branches of disjunction accept the empty string
-              [] -> [| Nothing |]
-              a : _ -> do
-                a' <- go a
-                pure $ AppE (unType a') (VarE x)
-          unsafeTExpCoerce . pure $
-            LamE [VarP x] $
-            CaseE (VarE x)
-            [ Match
-                (ConP '(:) [VarP c, VarP cs])
-                (GuardedB $ concat is_c_cases)
-                []
-            , Match WildP (NormalB null_case) []
-            ]
+        IR_Or _ bs -> ir_ors bs
         IR_Empty _ -> [|| \x -> Just (x, ()) ||]
         IR_Seq _ a b -> do
           [|| \x -> $$( go a ) x >>= \(x', a') ->
              $$( go b ) x' >>= \(x'', b') ->
              pure (x'', a' b') ||]
         IR_NotNull _ a -> go a
-        IR_Map _ f a -> let a' = go a in _
+
+    ir_ors :: (Lift c, Eq c)
+           => NonEmpty (IR Var c a) -> Q (TExp ([c] -> Maybe ([c], a)))
+    ir_ors as = foldl' comb [|| \_ -> Nothing ||] as
+      where
+        comb :: (Lift c, Eq c)
+                => Q (TExp ([c] -> Maybe ([c], a)))
+                -> IR Var c a
+                -> Q (TExp ([c] -> Maybe ([c], a)))
+        comb f2 ta =
+          let r = _first (irAnn ta)
+              n = _null (irAnn ta)
+          in
+          [|| \str ->
+                          case str of
+                            c:_ | c `elem` r ->  $$(go ta) str
+                            []  | n -> $$(go ta) str
+                            _ -> $$(f2) str ||]
