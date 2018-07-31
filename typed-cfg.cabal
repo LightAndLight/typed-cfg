@@ -26,5 +26,5 @@ library
                      , semigroupoids
                      , template-haskell-jailbreak
   hs-source-dirs:      src
-  ghc-options:         -O2 -Werror -Wincomplete-patterns
+  ghc-options:         -O2 -Werror -Wincomplete-patterns -ddump-splices -ddump-to-file
   default-language:    Haskell2010
