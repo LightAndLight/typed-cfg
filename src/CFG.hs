@@ -344,6 +344,8 @@ toIR e = case e of
     ors (Or _ a b) = ors a <> ors b
     ors a = pure a
 
+type Context c = [[c] -> Maybe ([c], ())]
+
 makeParser
   :: (Lift a, Lift c, Eq c, Show c)
   => CFG () Var c a
@@ -351,52 +353,54 @@ makeParser
   -> Q Exp
 makeParser = unTypeQ . go <=< toIR <=< either (fail . show) pure . typeOf
   where
+
+    --go :: Eq c => [Int] -> [[c] -> Maybe ([c], ())] -> CFG (Ty c) Var c a -> [c] -> Either (ParseError c) ([c], a)
     go
       :: (Lift c, Eq c)
       => IR Var c a
-      -> Code ([c] -> Maybe ([c], a))
+      -> Code ([Int] -> Context c -> [c] -> Maybe ([c], a))
     go e =
       case e of
-        IR_Pure _ a -> [|| \cs -> Just (cs, $$(a)) ||]
-        IR_Bot _ -> [|| \_ -> Nothing ||]
+        IR_Pure _ a -> [|| \_ _ cs -> Just (cs, $$(a)) ||]
+        IR_Bot _ -> [|| \_ _ _ -> Nothing ||]
         IR_Char _ c' ->
           [||
-             \x -> case x of
+             \_ _ x -> case x of
                c : cs -> if c' == c then Just (cs, c) else Nothing
                [] -> Nothing
           ||]
         IR_Or _ bs -> ir_ors bs
-        IR_Empty _ -> [|| \x -> Just (x, ()) ||]
+        IR_Empty _ -> [|| \_ _ x -> Just (x, ()) ||]
         IR_Seq _ a b -> do
-          [|| \x -> $$( go a ) x >>= \(x', a') ->
-             $$( go b ) x' >>= \(x'', b') ->
+          [|| \sup context x -> $$( go a ) sup context x >>= \(x', a') ->
+             $$( go b ) sup context x' >>= \(x'', b') ->
              pure (x'', a' b') ||]
         IR_NotNull _ a -> go a
         IR_Map ty f a ->
           let ft = _first ty
               n  = _null ty
           in
-            [|| \str -> case str of
-                          c:_ | c `elem` _first ty -> fmap $$(uncurry_c f) <$> ($$(go a) str)
-                          [] | _null ty -> fmap $$(uncurry_c f) <$> $$(go a) str
+            [|| \sup context str -> case str of
+                          c:_ | c `elem` _first ty -> fmap $$(uncurry_c f) <$> ($$(go a) sup context str)
+                          [] | _null ty -> fmap $$(uncurry_c f) <$> ($$(go a) sup context str)
                           _ -> Nothing ||]
 
         _ -> undefined
 
     ir_ors :: (Lift c, Eq c)
-           => NonEmpty (IR Var c a) -> Code ([c] -> Maybe ([c], a))
-    ir_ors as = foldl' comb [|| \_ -> Nothing ||] as
+           => NonEmpty (IR Var c a) -> Code ([Int] -> Context c -> [c] -> Maybe ([c], a))
+    ir_ors as = foldl' comb [|| \_ _ _ -> Nothing ||] as
       where
         comb :: (Lift c, Eq c)
-                => Code ([c] -> Maybe ([c], a))
+                => Code ([Int] -> Context c -> [c] -> Maybe ([c], a))
                 -> IR Var c a
-                -> Code ([c] -> Maybe ([c], a))
+                -> Code ([Int] -> Context c -> [c] -> Maybe ([c], a))
         comb f2 ta =
           let r = _first (irAnn ta)
               n = _null (irAnn ta)
           in
-          [|| \str ->
+          [|| \sup ctxt str ->
                           case str of
-                            c:_ | c `elem` r ->  $$(go ta) str
-                            []  | n -> $$(go ta) str
-                            _ -> $$(f2) str ||]
+                            c:_ | c `elem` r ->  $$(go ta) sup ctxt str
+                            []  | n -> $$(go ta) sup ctxt str
+                            _ -> $$(f2) sup ctxt str ||]
