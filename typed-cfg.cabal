@@ -26,3 +26,13 @@ library
   hs-source-dirs:      src
   ghc-options:         -O -Werror -Wincomplete-patterns
   default-language:    Haskell2010
+
+executable benchmarks
+  main-is:             Main.hs
+  build-depends:       base >=4.9 && <5
+                     , typed-cfg
+                     , criterion
+                     , megaparsec
+  hs-source-dirs:      benchmarks
+  ghc-options:         -O -Werror -Wincomplete-patterns
+  default-language:    Haskell2010

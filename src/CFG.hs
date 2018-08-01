@@ -17,6 +17,7 @@ import Control.Monad ((<=<), unless, when)
 import Data.Either (fromRight)
 import Data.List (intersect, union, foldl')
 import Data.List.NonEmpty (NonEmpty(..), toList)
+import Data.Semigroup ((<>))
 import Data.Traversable (for)
 
 import Language.Haskell.TH.Lib
