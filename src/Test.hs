@@ -21,3 +21,6 @@ parseBrackets = $$(makeParser brackets)
 
 parseAlternate :: String -> Maybe (String, ())
 parseAlternate = $$(makeParser alternate)
+
+parseAlternatingBrackets :: String -> Maybe (String, ())
+parseAlternatingBrackets = $$(makeParser alternatingBrackets)
