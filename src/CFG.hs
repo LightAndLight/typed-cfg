@@ -293,6 +293,22 @@ brackets =
     (Empty ())
     (Char () '(' .> Var () t <. Char () ')' <. Var () t)
 
+-- |
+-- T ::= e | '(' U ')' T
+-- U ::= e | '{' T '}' U
+alternate :: CFG () v Char ()
+alternate =
+  Mu () $ \t ->
+  Or ()
+    (Empty ())
+    (Char () '(' .>
+     (Mu () $ \u ->
+      Or ()
+        (Empty ())
+        (Char () '{' .> Var () t <. Char () '}' <. Var () u)) <.
+     Char () ')' <.
+     Var () t)
+
 data IR var c a where
   IR_Pure :: Ty c -> Code a -> IR var c a
   IR_Bot :: Ty c -> IR var c a

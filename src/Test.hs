@@ -18,3 +18,6 @@ parseAorBs = $$(makeParser (many $ Or () (Char () 'a') (Char () 'b')))
 
 parseBrackets :: String -> Maybe (String, ())
 parseBrackets = $$(makeParser brackets)
+
+parseAlternate :: String -> Maybe (String, ())
+parseAlternate = $$(makeParser alternate)
