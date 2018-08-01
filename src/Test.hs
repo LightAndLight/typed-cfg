@@ -8,6 +8,7 @@ import Data.Text (Text)
 import Data.Word (Word8)
 
 import CFG
+import Library
 
 parseA :: String -> Maybe (String, Char)
 parseA = $$(makeParser (Char () 'a'))
@@ -39,3 +40,6 @@ parseBracketsB = $$(makeParser (brackets c2w))
 
 parseAlternate :: String -> Maybe (String, ())
 parseAlternate = $$(makeParser alternate)
+
+parseAlternatingBrackets :: String -> Maybe (String, ())
+parseAlternatingBrackets = $$(makeParser alternatingBrackets)
