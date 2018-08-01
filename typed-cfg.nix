@@ -1,17 +1,19 @@
-{ mkDerivation, base, bytestring, criterion, ghc, lens, megaparsec
-, stdenv, template-haskell, text, dump-core
+{ mkDerivation, base, bytestring, criterion, dump-core, ghc, lens
+, megaparsec, stdenv, tasty, tasty-hunit, template-haskell, text
 }:
 mkDerivation {
   pname = "typed-cfg";
   version = "0.1.0.0";
   src = ./.;
+  configureFlags = [ "-fdump-core" ];
   isLibrary = true;
   isExecutable = true;
   libraryHaskellDepends = [
-    base bytestring ghc lens template-haskell text dump-core
+    base bytestring dump-core ghc lens template-haskell text
   ];
   executableHaskellDepends = [
-    base bytestring criterion megaparsec text
+    base bytestring criterion dump-core megaparsec text
   ];
+  testHaskellDepends = [ base tasty tasty-hunit ];
   license = stdenv.lib.licenses.bsd3;
 }
