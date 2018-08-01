@@ -27,12 +27,12 @@ some :: Lift a => CFG () v c a -> CFG () v c [a]
 some c = map' (:) [|| (:) ||] c <.> many c
 
 -- | T → ε | "(" T ")" T
-brackets :: CFG () v Char ()
-brackets =
+brackets :: (Char -> c) -> CFG () v c ()
+brackets cc =
   Mu () $ \t ->
   Or ()
     (Empty ())
-    (Char () '(' .> Var () t <. Char () ')' <. Var () t)
+    (Char () (cc '(') .> Var () t <. Char () (cc ')') <. Var () t)
 
 alternatingBrackets :: CFG () v Char ()
 alternatingBrackets =
