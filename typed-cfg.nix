@@ -1,5 +1,5 @@
-{ mkDerivation, base, criterion, ghc, megaparsec, stdenv
-, template-haskell
+{ mkDerivation, base, bytestring, criterion, ghc, lens, megaparsec
+, stdenv, template-haskell, text
 }:
 mkDerivation {
   pname = "typed-cfg";
@@ -7,7 +7,11 @@ mkDerivation {
   src = ./.;
   isLibrary = true;
   isExecutable = true;
-  libraryHaskellDepends = [ base ghc template-haskell ];
-  executableHaskellDepends = [ base criterion megaparsec ];
+  libraryHaskellDepends = [
+    base bytestring ghc lens template-haskell text
+  ];
+  executableHaskellDepends = [
+    base bytestring criterion megaparsec text
+  ];
   license = stdenv.lib.licenses.bsd3;
 }

@@ -13,6 +13,7 @@ module CFG where
 import Unsafe.Coerce
 
 import Control.Applicative ((<|>))
+import Control.Lens.Cons (Cons, uncons)
 import Control.Monad ((<=<), unless, when)
 import Data.Either (fromRight)
 import Data.List (intersect, union, foldl')
@@ -286,12 +287,12 @@ some :: Lift a => CFG () v c a -> CFG () v c [a]
 some c = map' (:) [|| (:) ||] c <.> many c
 
 -- | T → ε | "(" T ")" T
-brackets :: CFG () v Char ()
-brackets =
+brackets :: (Char -> c) -> CFG () v c ()
+brackets cc =
   Mu () $ \t ->
   Or ()
     (Empty ())
-    (Char () '(' .> Var () t <. Char () ')' <. Var () t)
+    (Char () (cc '(') .> Var () t <. Char () (cc ')') <. Var () t)
 
 -- |
 -- T ::= e | '(' U ')' T
@@ -369,27 +370,32 @@ toIR e = case e of
 type Context c = [ExpQ]
 
 makeParser
-  :: (Lift a, Lift c, Eq c, Show c)
+  :: ( Lift a
+     , Lift c, Eq c, Show c
+     , Cons s s c c
+     )
   => CFG () Var c a
-  -> Code ([c] -> Maybe ([c], a))
-makeParser = go_staged [0..] [] <=< either (fail . show) (pure . toIR) . typeOf
+  -> Code (s -> Maybe (s, a))
+makeParser =
+  go_staged [0..] [] <=<
+  either (fail . show) (pure . toIR) . typeOf
 
 go_staged
-  :: forall c a
-   . (Lift c, Eq c)
+  :: forall s c a
+   . (Lift c, Eq c, Cons s s c c)
   => [Int]
   -> Context c
   -> IR Var c a
-  -> Code ([c] -> Maybe ([c], a))
+  -> Code (s -> Maybe (s, a))
 go_staged supply context e =
   case e of
     IR_Pure _ a -> [|| \cs -> Just (cs, $$(a)) ||]
     IR_Bot _ -> [|| \_ -> Nothing ||]
     IR_Char _ c' ->
       [||
-         \x -> case x of
-           c : cs -> if c' == c then Just (cs, c) else Nothing
-           [] -> Nothing
+         \x -> case uncons x of
+           Just (c, cs) -> if c' == c then Just (cs, c) else Nothing
+           Nothing -> Nothing
       ||]
     IR_Or _ bs -> ir_ors supply context bs
     IR_Empty _ -> [|| \x -> Just (x, ()) ||]
@@ -409,8 +415,8 @@ go_staged supply context e =
               fallThrough = [|| \str -> if _null ty then $$(success) str else Nothing ||]
             in
             [|| \str ->
-                case str of
-                  c : _ -> $$( foldr (\a b -> [|| if a == c then $$(success) else $$(b) ||]) [|| $$(fallThrough) ||] r) str
+                case uncons str of
+                  Just (c, _) -> $$( foldr (\a b -> [|| if a == c then $$(success) else $$(b) ||]) [|| $$(fallThrough) ||] r) str
                   _ -> $$(fallThrough) str ||]
 
     IR_Var ty (MkVar n) ->
@@ -423,12 +429,12 @@ go_staged supply context e =
       | otherwise -> error "impossible"
 
 ir_ors
-  :: forall c a
-  . (Lift c, Eq c)
+  :: forall s c a
+  . (Lift c, Eq c, Cons s s c c)
   => [Int]
   -> Context c
   -> NonEmpty (IR Var c a)
-  -> Code ([c] -> Maybe ([c], a))
+  -> Code (s -> Maybe (s, a))
 ir_ors supply context as =
   let
     fallThrough =
@@ -436,15 +442,15 @@ ir_ors supply context as =
         [] -> [|| \_ -> Nothing ||]
         a : _ -> go_staged supply context a
   in
-    [|| \str -> case str of
-        c : _ -> $$(foldr comb [|| \_ -> $$(fallThrough) ||] as) c str
+    [|| \str -> case uncons str of
+        Just (c, _) -> $$(foldr comb [|| \_ -> $$(fallThrough) ||] as) c str
         _ -> $$(fallThrough) str ||]
   where
     comb
-      :: (Lift c, Eq c)
+      :: (Lift c, Eq c, Cons s s c c)
       => IR Var c a
-      -> Code (c -> [c] -> Maybe ([c], a))
-      -> Code (c -> [c] -> Maybe ([c], a))
+      -> Code (c -> s -> Maybe (s, a))
+      -> Code (c -> s -> Maybe (s, a))
     comb ta f2 =
       let
         r = _first (irAnn ta)
