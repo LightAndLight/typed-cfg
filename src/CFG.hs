@@ -367,9 +367,9 @@ go_staged supply context e =
           fallThrough = [|| \str -> if _null ty then $$(success) str else Nothing ||]
         in
         [|| \str ->
-            case uncons str of
-              Just (c, _) -> $$( foldr (\a b -> [|| if a == c then $$(success) else $$(b) ||]) [|| $$(fallThrough) ||] r) str
-              _ -> $$(fallThrough) str ||]
+              case uncons str of
+                Just (c, _) -> if $$(elem_c [|| c ||] r) then $$(success) str else $$(fallThrough) str
+                _ -> $$(fallThrough) str ||]
 
     IR_Var ty (MkVar n) ->
       unsafeTExpCoerce (context !! n)
@@ -379,6 +379,10 @@ go_staged supply context e =
           [|| let x = $$(go_staged supply' (context ++ [ unTypeQ [|| x ||] ] ) (f $ MkVar s)) in x ||]
 
       | otherwise -> error "impossible"
+
+elem_c :: (Lift c, Eq c) => Code c -> [c] -> Code Bool
+elem_c c [] = [|| False ||]
+elem_c c (x:xs) = [|| if x == $$(c) then True else $$(elem_c c xs) ||]
 
 ir_ors
   :: forall s c a
@@ -407,4 +411,4 @@ ir_ors supply context as =
       let
         r = _first (irAnn ta)
       in
-        [|| \c -> $$( foldr (\a b -> [|| if a == c then $$(go_staged supply context ta) else $$(b) ||]) [|| $$(f2) c ||] r) ||]
+        [|| \c -> if $$(elem_c [|| c ||] r) then $$(go_staged supply context ta) else ($$(f2) c) ||]
