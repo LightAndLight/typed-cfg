@@ -12,18 +12,15 @@ module CFG where
 
 import Unsafe.Coerce
 
+import Control.Applicative ((<|>))
 import Control.Monad ((<=<), unless, when)
 import Data.Either (fromRight)
 import Data.List (intersect, union, foldl')
 import Data.List.NonEmpty (NonEmpty(..), toList)
 import Data.Traversable (for)
 
-import Language.Haskell.TH.Syntax
 import Language.Haskell.TH.Lib
-import Language.Haskell.TH.Jailbreak
-
-eval' :: forall a. Q (TExp a) -> Q a
-eval' q = eval (unTypeQ q) :: Q a
+import Language.Haskell.TH.Syntax
 
 type Code a = Q (TExp a)
 
@@ -432,4 +429,6 @@ ir_ors supply context as =
       let
         r = _first (irAnn ta)
       in
-      [|| \c -> if c `elem` r then $$(go_staged supply context ta) else $$(f2) c ||]
+        case ta of
+          IR_Char{} -> [|| \c str -> $$(go_staged supply context ta) str <|> $$(f2) c str ||]
+          _ -> [|| \c -> if c `elem` r then $$(go_staged supply context ta) else $$(f2) c ||]
