@@ -361,15 +361,16 @@ go_staged supply context e =
          pure (x'', a' b') ||]
     IR_NotNull _ a -> go_staged supply context a
     IR_Map ty f ta ->
-        let
-          r = _first ty
-          success = [|| fmap (fmap $$(uncurry_c f)) . ($$(go_staged supply context ta)) ||]
-          fallThrough = [|| \str -> if _null ty then $$(success) str else Nothing ||]
+        let r = _first ty
         in
-        [|| \str ->
-              case uncons str of
-                Just (c, _) -> if $$(elem_c [|| c ||] r) then $$(success) str else $$(fallThrough) str
-                _ -> $$(fallThrough) str ||]
+          [|| \str ->
+                let
+                success = fmap (fmap $$(uncurry_c f)) . ($$(go_staged supply context ta))
+                fallThrough = \str -> if _null ty then success str else Nothing
+                in
+                case uncons str of
+                  Just (c, _) -> if $$(elem_c [|| c ||] r) then success str else fallThrough str
+                  _ -> fallThrough str ||]
 
     IR_Var ty (MkVar n) ->
       unsafeTExpCoerce (context !! n)
