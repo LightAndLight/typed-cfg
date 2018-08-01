@@ -19,6 +19,8 @@ import Data.List (intersect, union, foldl')
 import Data.List.NonEmpty (NonEmpty(..), toList)
 import Data.Traversable (for)
 
+import qualified Data.Church.Maybe as Church
+
 import Language.Haskell.TH.Lib
 import Language.Haskell.TH.Syntax
 
@@ -355,7 +357,9 @@ makeParser
   :: (Lift a, Lift c, Eq c, Show c)
   => CFG () Var c a
   -> Code ([c] -> Maybe ([c], a))
-makeParser = go_staged [0..] [] <=< either (fail . show) (pure . toIR) . typeOf
+makeParser =
+  (\f -> [|| \str -> Church.maybe Nothing Just ($$(f) str) ||]) . go_staged [0..] [] <=<
+  either (fail . show) (pure . toIR) . typeOf
 
 go_staged
   :: forall c a
@@ -363,19 +367,19 @@ go_staged
   => [Int]
   -> Context c
   -> IR Var c a
-  -> Code ([c] -> Maybe ([c], a))
+  -> Code ([c] -> Church.Maybe ([c], a))
 go_staged supply context e =
   case e of
-    IR_Pure _ a -> [|| \cs -> Just (cs, $$(a)) ||]
-    IR_Bot _ -> [|| \_ -> Nothing ||]
+    IR_Pure _ a -> [|| \cs -> Church.just (cs, $$(a)) ||]
+    IR_Bot _ -> [|| \_ -> Church.nothing ||]
     IR_Char _ c' ->
       [||
          \x -> case x of
-           c : cs -> if c' == c then Just (cs, c) else Nothing
-           [] -> Nothing
+           c : cs -> if c' == c then Church.just (cs, c) else Church.nothing
+           [] -> Church.nothing
       ||]
     IR_Or _ bs -> ir_ors supply context bs
-    IR_Empty _ -> [|| \x -> Just (x, ()) ||]
+    IR_Empty _ -> [|| \x -> Church.just (x, ()) ||]
     IR_Seq _ a b -> do
       [|| \x ->
          $$( go_staged supply context a ) x >>= \(x', a') ->
@@ -389,7 +393,7 @@ go_staged supply context e =
           _ ->
             let
               success = [|| fmap (fmap $$(uncurry_c f)) . ($$(go_staged supply context ta)) ||]
-              fallThrough = [|| \str -> if _null ty then $$(success) str else Nothing ||]
+              fallThrough = [|| \str -> if _null ty then $$(success) str else Church.nothing ||]
             in
             [|| \str ->
                 case str of
@@ -421,12 +425,12 @@ ir_ors
   => [Int]
   -> Context c
   -> NonEmpty (IR Var c a)
-  -> Code ([c] -> Maybe ([c], a))
+  -> Code ([c] -> Church.Maybe ([c], a))
 ir_ors supply context as =
   let
     fallThrough =
       case filter (_null . irAnn) (toList as) of
-        [] -> [|| \_ -> Nothing ||]
+        [] -> [|| \_ -> Church.nothing ||]
         a : _ -> go_staged supply context a
   in
     [|| \str -> case str of
@@ -436,8 +440,8 @@ ir_ors supply context as =
     comb
       :: (Lift c, Eq c)
       => IR Var c a
-      -> Code (c -> [c] -> Maybe ([c], a))
-      -> Code (c -> [c] -> Maybe ([c], a))
+      -> Code (c -> [c] -> Church.Maybe ([c], a))
+      -> Code (c -> [c] -> Church.Maybe ([c], a))
     comb ta f2 =
       let
         r = _first (irAnn ta)

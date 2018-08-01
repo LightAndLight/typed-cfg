@@ -10,7 +10,7 @@ let
                        then pkgs.haskellPackages
                        else pkgs.haskell.packages.${compiler};
 
-  drv = haskellPackages.callPackage f {};
+  drv = haskellPackages.callPackage f { church-maybe = haskellPackages.callPackage ./nix/church-maybe.nix {}; };
 
 in
 
