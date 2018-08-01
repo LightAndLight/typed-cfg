@@ -3,6 +3,7 @@
 module Test where
 
 import CFG
+import Library
 
 parseA :: String -> Maybe (String, Char)
 parseA = $$(makeParser (Char () 'a'))
@@ -21,3 +22,6 @@ parseBrackets = $$(makeParser brackets)
 
 parseAlternate :: String -> Maybe (String, ())
 parseAlternate = $$(makeParser alternate)
+
+parseAlternatingBrackets :: String -> Maybe (String, ())
+parseAlternatingBrackets = $$(makeParser alternatingBrackets)
