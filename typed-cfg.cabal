@@ -50,3 +50,6 @@ executable benchmarks
   hs-source-dirs:      benchmarks
   ghc-options:         -O -Werror -Wincomplete-patterns
   default-language:    Haskell2010
+  if flag(dump-core)
+    build-depends: dump-core
+    ghc-options: -fplugin=DumpCore -fplugin-opt DumpCore:core-html
