@@ -358,7 +358,8 @@ makeParser
 makeParser = go_staged [0..] [] <=< either (fail . show) (pure . toIR) . typeOf
 
 go_staged
-  :: (Lift c, Eq c)
+  :: forall c a
+   . (Lift c, Eq c)
   => [Int]
   -> Context c
   -> IR Var c a
@@ -381,10 +382,21 @@ go_staged supply context e =
          $$( go_staged supply context b ) x' >>= \(x'', b') ->
          pure (x'', a' b') ||]
     IR_NotNull _ a -> go_staged supply context a
-    IR_Map ty f a ->
-      let ft = _first ty
-          n  = _null ty
-      in
+    IR_Map ty f ta ->
+        let r = _first ty in
+        case ta of
+          IR_Char{} -> [|| \str -> fmap $$(uncurry_c f) <$> $$(go_staged supply context ta) str ||]
+          _ ->
+            let
+              success = [|| fmap (fmap $$(uncurry_c f)) . ($$(go_staged supply context ta)) ||]
+              fallThrough = [|| \str -> if _null ty then $$(success) str else Nothing ||]
+            in
+            [|| \str ->
+                case str of
+                  c : _ -> $$( foldr (\a b -> [|| if a == c then $$(success) else $$(b) ||]) [|| $$(fallThrough) ||] r) str
+                  _ -> $$(fallThrough) str ||]
+          -- [|| \c -> $$( foldr (\a b -> [|| if a == c then $$(go_staged supply context ta) else $$(b) ||]) [|| $$(f2) c ||] r) ||]
+          {-
         [|| \str ->
             case str of
               c : _ | c `elem` _first ty -> fmap $$(uncurry_c f) <$> ($$(go_staged supply context a) str)
@@ -392,6 +404,7 @@ go_staged supply context e =
                 if _null ty
                 then fmap $$(uncurry_c f) <$> ($$(go_staged supply context a) str)
                 else Nothing ||]
+-}
 
     IR_Var ty (MkVar n) ->
       unsafeTExpCoerce (context !! n)
@@ -431,4 +444,5 @@ ir_ors supply context as =
       in
         case ta of
           IR_Char{} -> [|| \c str -> $$(go_staged supply context ta) str <|> $$(f2) c str ||]
-          _ -> [|| \c -> if c `elem` r then $$(go_staged supply context ta) else $$(f2) c ||]
+          _ -> [|| \c -> $$( foldr (\a b -> [|| if a == c then $$(go_staged supply context ta) else $$(b) ||]) [|| $$(f2) c ||] r) ||]
+            -- [|| \c -> if c `elem` r then $$(go_staged supply context ta) else $$(f2) c ||]
