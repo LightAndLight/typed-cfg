@@ -12,17 +12,16 @@ module CFG where
 
 import Unsafe.Coerce
 
+import Control.Applicative ((<|>))
 import Control.Monad ((<=<), unless, when)
 import Data.Either (fromRight)
 import Data.List (intersect, union, foldl')
 import Data.List.NonEmpty (NonEmpty(..), toList)
+import Data.Semigroup ((<>))
 import Data.Traversable (for)
 
+import Language.Haskell.TH.Lib
 import Language.Haskell.TH.Syntax
-import Language.Haskell.TH.Jailbreak
-
-eval' :: forall a. Q (TExp a) -> Q a
-eval' q = eval (unTypeQ q) :: Q a
 
 type Code a = Q (TExp a)
 
@@ -96,6 +95,7 @@ data TyError c where
 deriving instance Show c => Show (TyError c)
 
 newtype Var c a = MkVar Int
+newtype THVar c a = MkTHVar ExpQ
 newtype ShowCFG c a = ShowCFG (CFG () Var c a)
 
 instance Show c => Show (ShowCFG c a) where
@@ -285,21 +285,13 @@ many c = Mu () $ \x -> Or () (map' (const []) [|| (const []) ||] $ Empty ()) (ma
 some :: Lift a => CFG () v c a -> CFG () v c [a]
 some c = map' (:) [|| (:) ||] c <.> many c
 
--- | T → ε | "(" S ")" T
--- | S → ε | "(" T ")" S
-brackets :: CFG () v Char Int
+-- | T → ε | "(" T ")" T
+brackets :: CFG () v Char ()
 brackets =
   Mu () $ \t ->
   Or ()
-    (map' (const 1) [|| const 1 ||] $ Empty ())
-    (map' (const (*)) [|| const (*) ||] (Char () '(') <.>
-     (map' (+1) [|| (+1) ||] $
-      Mu () $ \s ->
-      Or ()
-        (map' (const 0) ([|| const 0 ||]) $ Empty ())
-        (map' (*) [|| (*) ||] (map' (const (+1)) [|| const (+1) ||] (Char () '(') <.> Var () t <. Char () ')') <.> Var () s)) <.
-      Char () ')' <.>
-     Var () t)
+    (Empty ())
+    (Char () '(' .> Var () t <. Char () ')' <. Var () t)
 
 data IR var c a where
   IR_Pure :: Ty c -> Code a -> IR var c a
@@ -310,8 +302,22 @@ data IR var c a where
   IR_Seq :: Ty c -> IR var c (a -> b) -> IR var c a -> IR var c b
   IR_NotNull :: Ty c -> IR var c a -> IR var c a
   IR_Var :: Ty c -> var c a -> IR var c a
-  IR_Mu :: Ty c -> (var c a -> Q (IR var c a)) -> IR var c a
+  IR_Mu :: Ty c -> (var c a -> IR var c a) -> IR var c a
   IR_Map :: Ty c -> (Code a -> Code b) -> IR var c a -> IR var c b
+
+ir_str :: IR var c a -> String
+ir_str e =
+  case e of
+    IR_Pure a _ -> "pure"
+    IR_Bot a -> "bot"
+    IR_Or a _ -> "or"
+    IR_Empty a -> "empty"
+    IR_Char a _ -> "char"
+    IR_Seq a _ _ -> "seq"
+    IR_NotNull a _ -> "notnull"
+    IR_Var a _ -> "var"
+    IR_Mu a _ -> "MU"
+    IR_Map a _ _ -> "MAP"
 
 irAnn :: IR b c d -> Ty c
 irAnn e =
@@ -327,75 +333,106 @@ irAnn e =
     IR_Mu a _ -> a
     IR_Map a _ _ -> a
 
-toIR :: CFG (Ty c) v c a -> Q (IR v c a)
+toIR :: CFG (Ty c) v c a -> IR v c a
 toIR e = case e of
-  Pure t a ca -> pure $ IR_Pure t ca
-  Bot t -> pure $ IR_Bot t
-  Or t a b -> IR_Or t <$> traverse toIR (ors a <> ors b)
-  Empty t -> pure $ IR_Empty t
-  Char t c -> pure $ IR_Char t c
-  Seq t a b -> IR_Seq t <$> toIR a <*> toIR b
-  NotNull t a -> IR_NotNull t <$> toIR a
-  Var t v -> pure $ IR_Var t v
-  Mu t f -> pure $ IR_Mu t (toIR . f)
+  Pure t a ca -> IR_Pure t ca
+  Bot t ->  IR_Bot t
+  Or t a b -> IR_Or t (fmap toIR (ors a <> ors b))
+  Empty t -> IR_Empty t
+  Char t c -> IR_Char t c
+  Seq t a b -> IR_Seq t (toIR a) (toIR b)
+  NotNull t a -> IR_NotNull t (toIR a)
+  Var t v -> IR_Var t v
+  Mu t f -> IR_Mu t (toIR . f)
   Map t f cf (Map _ g cg a) -> toIR (Map t (f . g) ([|| $$(cf) . $$(cg) ||]) a)
-  Map t f cf a -> IR_Map t (curry_c cf) <$> toIR a
+  Map t f cf a -> IR_Map t (curry_c cf) (toIR a)
   where
     ors (Or _ a b) = ors a <> ors b
     ors a = pure a
+
+type Context c = [ExpQ]
 
 makeParser
   :: (Lift a, Lift c, Eq c, Show c)
   => CFG () Var c a
   -> Code ([c] -> Maybe ([c], a))
-makeParser = go <=< toIR <=< either (fail . show) pure . typeOf
+makeParser = go_staged [0..] [] <=< either (fail . show) (pure . toIR) . typeOf
+
+go_staged
+  :: forall c a
+   . (Lift c, Eq c)
+  => [Int]
+  -> Context c
+  -> IR Var c a
+  -> Code ([c] -> Maybe ([c], a))
+go_staged supply context e =
+  case e of
+    IR_Pure _ a -> [|| \cs -> Just (cs, $$(a)) ||]
+    IR_Bot _ -> [|| \_ -> Nothing ||]
+    IR_Char _ c' ->
+      [||
+         \x -> case x of
+           c : cs -> if c' == c then Just (cs, c) else Nothing
+           [] -> Nothing
+      ||]
+    IR_Or _ bs -> ir_ors supply context bs
+    IR_Empty _ -> [|| \x -> Just (x, ()) ||]
+    IR_Seq _ a b -> do
+      [|| \x ->
+         $$( go_staged supply context a ) x >>= \(x', a') ->
+         $$( go_staged supply context b ) x' >>= \(x'', b') ->
+         pure (x'', a' b') ||]
+    IR_NotNull _ a -> go_staged supply context a
+    IR_Map ty f ta ->
+        let r = _first ty in
+        case ta of
+          IR_Char{} -> [|| \str -> fmap $$(uncurry_c f) <$> $$(go_staged supply context ta) str ||]
+          _ ->
+            let
+              success = [|| fmap (fmap $$(uncurry_c f)) . ($$(go_staged supply context ta)) ||]
+              fallThrough = [|| \str -> if _null ty then $$(success) str else Nothing ||]
+            in
+            [|| \str ->
+                case str of
+                  c : _ -> $$( foldr (\a b -> [|| if a == c then $$(success) else $$(b) ||]) [|| $$(fallThrough) ||] r) str
+                  _ -> $$(fallThrough) str ||]
+
+    IR_Var ty (MkVar n) ->
+      unsafeTExpCoerce (context !! n)
+
+    IR_Mu ty f
+      | s:supply' <- supply ->
+          [|| let x = $$(go_staged supply' (unTypeQ [|| x ||] : context) (f $ MkVar s)) in x ||]
+
+      | otherwise -> error "impossible"
+
+ir_ors
+  :: forall c a
+  . (Lift c, Eq c)
+  => [Int]
+  -> Context c
+  -> NonEmpty (IR Var c a)
+  -> Code ([c] -> Maybe ([c], a))
+ir_ors supply context as =
+  let
+    fallThrough =
+      case filter (_null . irAnn) (toList as) of
+        [] -> [|| \_ -> Nothing ||]
+        a : _ -> go_staged supply context a
+  in
+    [|| \str -> case str of
+        c : _ -> $$(foldr comb [|| \_ -> $$(fallThrough) ||] as) c str
+        _ -> $$(fallThrough) str ||]
   where
-    go
+    comb
       :: (Lift c, Eq c)
       => IR Var c a
-      -> Code ([c] -> Maybe ([c], a))
-    go e =
-      case e of
-        IR_Pure _ a -> [|| \cs -> Just (cs, $$(a)) ||]
-        IR_Bot _ -> [|| \_ -> Nothing ||]
-        IR_Char _ c' ->
-          [||
-             \x -> case x of
-               c : cs -> if c' == c then Just (cs, c) else Nothing
-               [] -> Nothing
-          ||]
-        IR_Or _ bs -> ir_ors bs
-        IR_Empty _ -> [|| \x -> Just (x, ()) ||]
-        IR_Seq _ a b -> do
-          [|| \x -> $$( go a ) x >>= \(x', a') ->
-             $$( go b ) x' >>= \(x'', b') ->
-             pure (x'', a' b') ||]
-        IR_NotNull _ a -> go a
-        IR_Map ty f a ->
-          let ft = _first ty
-              n  = _null ty
-          in
-            [|| \str -> case str of
-                  c:_ | c `elem` _first ty -> fmap $$(uncurry_c f) <$> ($$(go a) str)
-                  [] | _null ty -> fmap $$(uncurry_c f) <$> $$(go a) str
-                  _ -> Nothing ||]
-
-        _ -> undefined
-
-    ir_ors :: (Lift c, Eq c)
-           => NonEmpty (IR Var c a) -> Code ([c] -> Maybe ([c], a))
-    ir_ors as = foldl' comb [|| \_ -> Nothing ||] as
-      where
-        comb :: (Lift c, Eq c)
-                => Code ([c] -> Maybe ([c], a))
-                -> IR Var c a
-                -> Code ([c] -> Maybe ([c], a))
-        comb f2 ta =
-          let r = _first (irAnn ta)
-              n = _null (irAnn ta)
-          in
-            [|| \str ->
-                  case str of
-                    c:_ | c `elem` r ->  $$(go ta) str
-                    []  | n -> $$(go ta) str
-                    _ -> $$(f2) str ||]
+      -> Code (c -> [c] -> Maybe ([c], a))
+      -> Code (c -> [c] -> Maybe ([c], a))
+    comb ta f2 =
+      let
+        r = _first (irAnn ta)
+      in
+        case ta of
+          IR_Char{} -> [|| \c str -> $$(go_staged supply context ta) str <|> $$(f2) c str ||]
+          _ -> [|| \c -> $$( foldr (\a b -> [|| if a == c then $$(go_staged supply context ta) else $$(b) ||]) [|| $$(f2) c ||] r) ||]

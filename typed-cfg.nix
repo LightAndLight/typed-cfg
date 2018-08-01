@@ -1,12 +1,13 @@
-{ mkDerivation, base, ghc, semigroupoids, stdenv
-, template-haskell, template-haskell-jailbreak
+{ mkDerivation, base, criterion, ghc, megaparsec, stdenv
+, template-haskell
 }:
 mkDerivation {
   pname = "typed-cfg";
   version = "0.1.0.0";
   src = ./.;
-  libraryHaskellDepends = [
-    base ghc semigroupoids template-haskell template-haskell-jailbreak
-  ];
+  isLibrary = true;
+  isExecutable = true;
+  libraryHaskellDepends = [ base ghc template-haskell ];
+  executableHaskellDepends = [ base criterion megaparsec ];
   license = stdenv.lib.licenses.bsd3;
 }
