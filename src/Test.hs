@@ -3,6 +3,7 @@
 module Test where
 
 import CFG
+import Library
 
 parseA :: String -> Maybe (String, Char)
 parseA = $$(makeParser (Char () 'a'))

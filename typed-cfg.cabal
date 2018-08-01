@@ -22,7 +22,7 @@ flag dump-core
 
 
 library
-  exposed-modules:     CFG, Test
+  exposed-modules:     CFG, Test, Library
   -- other-modules:
   -- other-extensions:
   build-depends:       base >=4.9 && <5
