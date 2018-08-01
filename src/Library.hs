@@ -55,6 +55,15 @@ alternate =
      (Mu () $ \u ->
       Or ()
         (Empty ())
-        (Char () '{' .> Var () t <. Char () '}' <. Var () u)) <.
+        (Char () '{' .>
+         (Mu () $ \v ->
+          Or ()
+            (Empty ())
+            (Char () '[' .>
+             Var () t <.
+             Char () ']' <.
+             Var () v)) <.
+         Char () '}' <.
+         Var () u)) <.
      Char () ')' <.
      Var () t)
