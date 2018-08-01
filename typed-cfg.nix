@@ -14,6 +14,6 @@ mkDerivation {
   executableHaskellDepends = [
     base bytestring criterion dump-core megaparsec text
   ];
-  testHaskellDepends = [ base inspection-testing tasty tasty-hunit ];
+  testHaskellDepends = [ base dump-core inspection-testing tasty tasty-hunit ];
   license = stdenv.lib.licenses.bsd3;
 }
