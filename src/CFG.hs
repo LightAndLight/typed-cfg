@@ -369,7 +369,8 @@ go_staged supply context e =
                 fallThrough = \str -> if _null ty then success str else Nothing
                 in
                 case uncons str of
-                  Just (c, _) -> if $$(elem_c [|| c ||] r) then success str else fallThrough str
+                  Just (c, _) ->
+                    $$(elem_c [|| c ||] r [|| \_ -> success str ||] [|| fallThrough str ||])
                   _ -> fallThrough str ||]
 
     IR_Var ty (MkVar n) ->
@@ -381,9 +382,18 @@ go_staged supply context e =
 
       | otherwise -> error "impossible"
 
-elem_c :: (Lift c, Eq c) => Code c -> [c] -> Code Bool
-elem_c c [] = [|| False ||]
-elem_c c (x:xs) = [|| if x == $$(c) then True else $$(elem_c c xs) ||]
+elem_c
+  :: (Lift a, Eq a)
+  => Code a -- ^ Needle
+  -> [a] -- ^ Haystack
+  -> Code (a -> r) -- ^ If needle is found
+  -> Code r -- ^ If needle isn't found
+  -> Code r
+elem_c c r found notFound =
+  foldr
+    (\a b -> [|| if a == $$(c) then $$(found) $$(c) else $$(b) ||])
+    [|| $$(notFound) ||]
+    r
 
 ir_ors
   :: forall s c a
@@ -413,4 +423,4 @@ ir_ors supply context as =
       let
         r = _first (irAnn ta)
       in
-        [|| \c -> if $$(elem_c [|| c ||] r) then $$(go_staged supply context ta) else ($$(f2) c) ||]
+        [|| \c -> $$(elem_c [|| c ||] r [|| \_ -> $$(go_staged supply context ta) ||] [|| $$(f2) c ||]) ||]
