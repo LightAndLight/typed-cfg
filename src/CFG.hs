@@ -361,25 +361,22 @@ go_staged supply context e =
          pure (x'', a' b') ||]
     IR_NotNull _ a -> go_staged supply context a
     IR_Map ty f ta ->
-        let r = _first ty in
-        case ta of
-          IR_Char{} -> [|| \str -> fmap $$(uncurry_c f) <$> $$(go_staged supply context ta) str ||]
-          _ ->
-            let
-              success = [|| fmap (fmap $$(uncurry_c f)) . ($$(go_staged supply context ta)) ||]
-              fallThrough = [|| \str -> if _null ty then $$(success) str else Nothing ||]
-            in
-            [|| \str ->
-                case uncons str of
-                  Just (c, _) -> $$( foldr (\a b -> [|| if a == c then $$(success) else $$(b) ||]) [|| $$(fallThrough) ||] r) str
-                  _ -> $$(fallThrough) str ||]
+        let
+          r = _first ty
+          success = [|| fmap (fmap $$(uncurry_c f)) . ($$(go_staged supply context ta)) ||]
+          fallThrough = [|| \str -> if _null ty then $$(success) str else Nothing ||]
+        in
+        [|| \str ->
+            case uncons str of
+              Just (c, _) -> $$( foldr (\a b -> [|| if a == c then $$(success) else $$(b) ||]) [|| $$(fallThrough) ||] r) str
+              _ -> $$(fallThrough) str ||]
 
     IR_Var ty (MkVar n) ->
       unsafeTExpCoerce (context !! n)
 
     IR_Mu ty f
-      | s:supply' <- supply ->
-          [|| let x = $$(go_staged supply' (unTypeQ [|| x ||] : context) (f $ MkVar s)) in x ||]
+      | s:supply' <- supply -> do
+          [|| let x = $$(go_staged supply' (context ++ [ unTypeQ [|| x ||] ] ) (f $ MkVar s)) in x ||]
 
       | otherwise -> error "impossible"
 
@@ -410,6 +407,4 @@ ir_ors supply context as =
       let
         r = _first (irAnn ta)
       in
-        case ta of
-          IR_Char{} -> [|| \c str -> $$(go_staged supply context ta) str <|> $$(f2) c str ||]
-          _ -> [|| \c -> $$( foldr (\a b -> [|| if a == c then $$(go_staged supply context ta) else $$(b) ||]) [|| $$(f2) c ||] r) ||]
+        [|| \c -> $$( foldr (\a b -> [|| if a == c then $$(go_staged supply context ta) else $$(b) ||]) [|| $$(f2) c ||] r) ||]
