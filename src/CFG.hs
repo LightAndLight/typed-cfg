@@ -399,9 +399,10 @@ ir_ors supply context as =
         [] -> [|| \_ -> Nothing ||]
         a : _ -> go_staged supply context a
   in
-    [|| \str -> case uncons str of
-        Just (c, _) -> $$(foldr comb [|| \_ -> $$(fallThrough) ||] as) c str
-        _ -> $$(fallThrough) str ||]
+    [|| let ff = $$(fallThrough) in
+      \str -> case uncons str of
+        Just (c, _) -> $$(foldr comb [|| \_ -> ff ||] as) c str
+        _ -> ff str ||]
   where
     comb
       :: (Lift c, Eq c, Cons s s c c)
