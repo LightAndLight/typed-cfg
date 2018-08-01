@@ -57,11 +57,12 @@ executable benchmarks
 test-suite             tasty
   type:                exitcode-stdio-1.0
   main-is:             tasty.hs
-  other-modules:
+  other-modules:       Inspection
   default-language:    Haskell2010
   build-depends:       base >=4.8 && <5
                        , typed-cfg
                        , tasty >= 0.11 && < 1.2
                        , tasty-hunit >= 0.9 && < 0.11
+                       , inspection-testing >=0.2 && <0.4
   ghc-options:         -Wall
   hs-source-dirs:      tests
