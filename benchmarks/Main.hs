@@ -3,6 +3,7 @@ module Main where
 import Criterion.Main
 
 import Test
+import qualified TestLMS as LMS
 
 import Data.ByteString (ByteString)
 import Data.ByteString.Internal (c2w)
@@ -84,11 +85,15 @@ main =
       [ bench "normal" $ whnf parseAorBs str
       , bench "megaparsec" $ whnf parseAorBs' str
       , bench "hand" $ whnf parseAorBsHand str
+      , bench "lms" $ whnf LMS.parseAorBs str
+      , bench "interpret" $ whnf LMS.parseAorBs_interpret str
       ]
   , env (pure $ replicate 25000 '(' ++ replicate 25000 ')') $ \str ->
       bgroup "brackets"
       [ bench "normal" $ whnf parseBrackets str
       , bench "megaparsec" $ whnf parseBrackets' str
+      , bench "lms" $ whnf LMS.parseBrackets str
+      , bench "interpret" $ whnf LMS.parseBrackets_interpret str
       ]
   , env (pure . Text.pack $ replicate 50000 'a') $ \str ->
       bgroup "a or bs text"
