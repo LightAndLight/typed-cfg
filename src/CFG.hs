@@ -335,6 +335,19 @@ makeParser =
   go_staged [0..] [] <=<
   either (fail . show) (pure . toIR) . typeOf
 
+elem_c
+  :: (Lift a, Eq a)
+  => Code a -- ^ Needle
+  -> [a] -- ^ Haystack
+  -> Code (a -> r) -- ^ If needle is found
+  -> Code r -- ^ If needle isn't found
+  -> Code r
+elem_c c r found notFound =
+  foldr
+    (\a b -> [|| if a == $$(c) then $$(found) $$(c) else $$(b) ||])
+    notFound
+    r
+
 go_staged
   :: forall s c a
    . (Lift c, Eq c, Cons s s c c)
@@ -361,15 +374,19 @@ go_staged supply context e =
          pure (x'', a' b') ||]
     IR_NotNull _ a -> go_staged supply context a
     IR_Map ty f ta ->
-        let
-          r = _first ty
-          success = [|| fmap (fmap $$(uncurry_c f)) . ($$(go_staged supply context ta)) ||]
-          fallThrough = [|| \str -> if _null ty then $$(success) str else Nothing ||]
+        let r = _first ty
         in
-        [|| \str ->
-            case uncons str of
-              Just (c, _) -> $$( foldr (\a b -> [|| if a == c then $$(success) else $$(b) ||]) [|| $$(fallThrough) ||] r) str
-              _ -> $$(fallThrough) str ||]
+          [|| \str ->
+              let
+                success = fmap (fmap $$(uncurry_c f)) . $$(go_staged supply context ta)
+                fallThrough = \str -> if _null ty then success str else Nothing
+              in
+                case uncons str of
+                  Just (c, _) ->
+                    -- The `const` here is superfluous, but it makes -Wall shut up about "defined"
+                    -- but not used
+                    $$(elem_c [|| c ||] r [|| \_ -> success ||] [|| const fallThrough c ||]) str
+                  _ -> fallThrough str ||]
 
     IR_Var ty (MkVar n) ->
       unsafeTExpCoerce (context !! n)
@@ -377,7 +394,6 @@ go_staged supply context e =
     IR_Mu ty f
       | s:supply' <- supply -> do
           [|| let x = $$(go_staged supply' (context ++ [ unTypeQ [|| x ||] ] ) (f $ MkVar s)) in x ||]
-
       | otherwise -> error "impossible"
 
 ir_ors
@@ -394,17 +410,19 @@ ir_ors supply context as =
         [] -> [|| \_ -> Nothing ||]
         a : _ -> go_staged supply context a
   in
-    [|| \str -> case uncons str of
-        Just (c, _) -> $$(foldr comb [|| \_ -> $$(fallThrough) ||] as) c str
-        _ -> $$(fallThrough) str ||]
+    [|| let ff = $$(fallThrough) in
+      \str -> case uncons str of
+        Just (c, _) -> $$(foldr (comb [|| c ||]) [|| ff ||] as) str
+        _ -> ff str ||]
   where
     comb
       :: (Lift c, Eq c, Cons s s c c)
-      => IR Var c a
-      -> Code (c -> s -> Maybe (s, a))
-      -> Code (c -> s -> Maybe (s, a))
-    comb ta f2 =
+      => Code c
+      -> IR Var c a
+      -> Code (s -> Maybe (s, a))
+      -> Code (s -> Maybe (s, a))
+    comb c ta f2 =
       let
         r = _first (irAnn ta)
       in
-        [|| \c -> $$( foldr (\a b -> [|| if a == c then $$(go_staged supply context ta) else $$(b) ||]) [|| $$(f2) c ||] r) ||]
+        elem_c c r [|| \_ -> $$(go_staged supply context ta) ||] f2

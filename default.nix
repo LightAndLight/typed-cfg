@@ -10,7 +10,9 @@ let
                        then pkgs.haskellPackages
                        else pkgs.haskell.packages.${compiler};
 
-  hp = haskellPackages.extend( sel: sup: { dump-core = sel.callPackage ./nix/dump-core.nix {}; } );
+  hp = haskellPackages.extend( sel: sup: {
+    dump-core = sel.callPackage ./nix/dump-core.nix {};
+    } );
 
   drv = hp.callPackage f {};
 

@@ -23,6 +23,19 @@ parseAorBs' =
     p :: Parsec Void String String
     p = many (char 'a' <|> char 'b')
 
+parseAorBsHand [] = Just ("", [])
+parseAorBsHand str@(c:cs) =
+  case c of
+    'a' ->
+      case parseAorBsHand cs of
+        Nothing -> Nothing
+        Just (cs', r) -> Just (cs', c:r)
+    'b' ->
+      case parseAorBsHand cs of
+        Nothing -> Nothing
+        Just (cs', r) -> Just (cs', c:r)
+    _   -> Just (str, [])
+
 parseBrackets' :: String -> Maybe ()
 parseBrackets' =
   parseMaybe p
@@ -70,6 +83,7 @@ main =
       bgroup "a or bs"
       [ bench "normal" $ whnf parseAorBs str
       , bench "megaparsec" $ whnf parseAorBs' str
+      , bench "hand" $ whnf parseAorBsHand str
       ]
   , env (pure $ replicate 25000 '(' ++ replicate 25000 ')') $ \str ->
       bgroup "brackets"

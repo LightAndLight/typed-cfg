@@ -1,5 +1,6 @@
-{ mkDerivation, base, bytestring, criterion, ghc, lens, megaparsec
-, stdenv, template-haskell, text, dump-core
+{ mkDerivation, base, bytestring, criterion, dump-core
+, inspection-testing, lens, megaparsec, stdenv, tasty, tasty-hunit
+, template-haskell, text
 }:
 mkDerivation {
   pname = "typed-cfg";
@@ -8,10 +9,11 @@ mkDerivation {
   isLibrary = true;
   isExecutable = true;
   libraryHaskellDepends = [
-    base bytestring ghc lens template-haskell text dump-core
+    base bytestring dump-core lens template-haskell text
   ];
   executableHaskellDepends = [
-    base bytestring criterion megaparsec text
+    base bytestring criterion dump-core megaparsec text
   ];
+  testHaskellDepends = [ base dump-core inspection-testing tasty tasty-hunit ];
   license = stdenv.lib.licenses.bsd3;
 }

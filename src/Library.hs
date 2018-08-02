@@ -45,7 +45,8 @@ alternatingBrackets =
 
 -- |
 -- T ::= e | '(' U ')' T
--- U ::= e | '{' T '}' U
+-- U ::= e | '{' V '}' U
+-- V ::= e | '{' T '}' V
 alternate :: CFG () v Char ()
 alternate =
   Mu () $ \t ->
