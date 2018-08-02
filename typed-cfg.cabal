@@ -21,7 +21,7 @@ flag dump-core
   default:     False
 
 library
-  exposed-modules:     CFG, Test, Library
+  exposed-modules:     CFG, Test, Library, LMS
   -- other-modules:
   -- other-extensions:
   build-depends:       base >=4.9 && <5
