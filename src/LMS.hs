@@ -59,6 +59,9 @@ class Ops r where
   _fst :: r (a, b) -> r a
   _snd :: r (a, b) -> r b
   _fmap :: Functor f => r (a -> b) -> r (f a) -> r (f b)
+  _const_l :: r a -> r b -> r a
+  _const_r :: r a -> r b -> r b
+  _cons :: r a -> r ([a] -> [a])
 
   _bind :: Monad m => r (m a) -> r (a -> m b) -> r (m b)
 
@@ -108,6 +111,9 @@ instance Ops Code where
   _fst (Code a) = Code [|| fst $$a ||]
   _snd (Code a) = Code [|| snd $$a ||]
   _fmap (Code f) (Code a) = Code [|| fmap $$f $$a ||]
+  _const_l f1 _ = f1
+  _const_r _ f2 = f2
+  _cons (Code r) = Code [|| \rs -> $$r : rs ||]
 
   _cast = Code . unsafeTExpCoerce
   _forget (Code a) = unTypeQ a
@@ -144,6 +150,9 @@ instance Ops Identity where
   _snd = liftA snd
   _fmap = liftA2 fmap
   _bind = liftA2 (>>=)
+  _const_l = liftA2 (\a b -> a)
+  _const_r = liftA2 (\a b -> b)
+  _cons (Identity r) = Identity (\rs -> r:rs)
 
   _cast = unsafeCoerce
   _forget = unsafeCoerce
@@ -463,6 +472,14 @@ toIR e = case e of
     ors a = A.pure a
 
 type Context r c = [DynVal r]
+
+compile :: (Lift a, Lift c, Eq c, Show c, Cons s s c c)
+        => CFG () Var c a -> Q (TExp (s -> Maybe (s, a)))
+compile = runCode . makeParser_lms
+
+interpret :: (Lift a, Lift c, Eq c, Show c, Cons s s c c)
+              => CFG () Var c a -> s -> Maybe (s, a)
+interpret = runIdentity . makeParser_lms
 
 makeParser_lms
   :: ( Lift a
