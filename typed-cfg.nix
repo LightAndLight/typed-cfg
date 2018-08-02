@@ -1,4 +1,4 @@
-{ mkDerivation, base, bytestring, criterion, dump-core, ghc
+{ mkDerivation, base, bytestring, criterion, dump-core
 , inspection-testing, lens, megaparsec, stdenv, tasty, tasty-hunit
 , template-haskell, text
 }:
@@ -9,7 +9,7 @@ mkDerivation {
   isLibrary = true;
   isExecutable = true;
   libraryHaskellDepends = [
-    base bytestring dump-core ghc lens template-haskell text
+    base bytestring dump-core lens template-haskell text
   ];
   executableHaskellDepends = [
     base bytestring criterion dump-core megaparsec text
