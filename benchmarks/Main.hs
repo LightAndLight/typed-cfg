@@ -23,19 +23,18 @@ parseAorBs' =
     p :: Parsec Void String String
     p = many (char 'a' <|> char 'b')
 
-parseAorBsHand :: String -> Maybe (String, [Char])
 parseAorBsHand [] = Just ("", [])
-parseAorBsHand (c:cs) =
+parseAorBsHand str@(c:cs) =
   case c of
     'a' ->
-      case (parseAorBsHand cs) of
-        Nothing -> Just (cs, "a")
-        Just (cs', r) -> Just (cs', 'a':r)
+      case parseAorBsHand cs of
+        Nothing -> Nothing
+        Just (cs', r) -> Just (cs', c:r)
     'b' ->
-      case (parseAorBsHand cs) of
-        Nothing -> Just (cs, "b")
-        Just (cs', r) -> Just (cs', 'b':r)
-    _   -> Nothing
+      case parseAorBsHand cs of
+        Nothing -> Nothing
+        Just (cs', r) -> Just (cs', c:r)
+    _   -> Just (str, [])
 
 parseBrackets' :: String -> Maybe ()
 parseBrackets' =
