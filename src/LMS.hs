@@ -532,7 +532,7 @@ go_lms supply context e =
                               _bind (go_lms supply context b <*> x')
                                     (_lam $ \r' -> let x'' = _fst r'
                                                        b'  = _snd r'
-                                                   in _just (_tup x' (a' <*> b'))))
+                                                   in _just (_tup x'' (a' <*> b'))))
     IR_NotNull _ a -> go_lms supply context a
     IR_Map ty (lmsCode -> f) ta ->
         let r = _first ty
