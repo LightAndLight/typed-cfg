@@ -58,6 +58,7 @@ class Ops r where
   _tup :: r a -> r b -> r (a, b)
   _fst :: r (a, b) -> r a
   _snd :: r (a, b) -> r b
+  _elim_prod :: r (a, b) -> (r a -> r b -> r x) -> r x
   _fmap :: Functor f => r (a -> b) -> r (f a) -> r (f b)
   _const_l :: r a -> r b -> r a
   _const_r :: r a -> r b -> r b
@@ -110,6 +111,8 @@ instance Ops Code where
   _tup (Code a) (Code b) = Code [|| ($$a, $$b) ||]
   _fst (Code a) = Code [|| fst $$a ||]
   _snd (Code a) = Code [|| snd $$a ||]
+  _elim_prod (Code p) f = Code [|| case $$p of
+                                      (a, b) -> $$(runCode $ f (Code ([|| a ||])) (Code [|| b ||])) ||]
   _fmap (Code f) (Code a) = Code [|| fmap $$f $$a ||]
   _const_l f1 _ = f1
   _const_r _ f2 = f2
@@ -148,6 +151,7 @@ instance Ops Identity where
   _tup = liftA2 (,)
   _fst = liftA fst
   _snd = liftA snd
+  _elim_prod (Identity (a,b)) f = f (Identity a) (Identity b)
   _fmap = liftA2 fmap
   _bind = liftA2 (>>=)
   _const_l = liftA2 (\a b -> a)
@@ -526,13 +530,10 @@ go_lms supply context e =
     IR_Seq _ a b ->
       _lam $ \x ->
          _bind (go_lms supply context a <*> x)
-               (_lam $ \r -> let x' = _fst r
-                                 a' = _snd r
-                             in
+               (_lam $ \r -> _elim_prod r (\x' a' ->
                               _bind (go_lms supply context b <*> x')
-                                    (_lam $ \r' -> let x'' = _fst r'
-                                                       b'  = _snd r'
-                                                   in _just (_tup x'' (a' <*> b'))))
+                                    (_lam $ \r' -> _elim_prod r' (\x'' b' ->
+                                                      _just (_tup x'' (a' <*> b'))))))
     IR_NotNull _ a -> go_lms supply context a
     IR_Map ty (lmsCode -> f) ta ->
         let r = _first ty
