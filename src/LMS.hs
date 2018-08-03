@@ -13,7 +13,9 @@
 
 {-# language TemplateHaskell #-}
 
-module LMS where
+{-# OPTIONS_GHC -fplugin=LiftPlugin #-}
+
+module LMS (module LMS, Pure(..)) where
 -- This module implements a function which can be specialised to a
 -- interpreter or a compiler.
 import Unsafe.Coerce
@@ -34,44 +36,66 @@ import Prelude hiding (Applicative(..))
 import Data.Functor.Identity
 import GHC.Exts (Any)
 
+import LiftPlugin
+
 newtype Code a = Code (Q (TExp a))
 
 runCode (Code a) = a
 
 -- LMS start
 
-class Ops r where
+class Pure r => Ops r where
   type DynVal r
+  -- Structural overloading
   _if :: r Bool -> r a -> r a -> r a
-  --_caseString :: r ByteString -> r a -> r a -> r a
   _uncons :: Cons c c a a => r c -> (r a -> r c -> r res) -> r res -> r res
   _fix :: (r a -> r a) -> r a
   _lam :: (r a -> r b) -> r (a -> b)
   _let :: r a -> (r a -> r b) -> r b
+  _elim_prod :: r (a, b) -> (r a -> r b -> r x) -> r x
 
   -- Pointless lifting
-  _eq :: Eq a => r a -> r a -> r Bool
-  _comp :: r (b -> c) -> r (a -> b) -> r (a -> c)
-  _just :: r a -> r (Maybe a)
-  -- Otherwise we need any annoying `Lift` constraint on `a`.
+  {-
+  -}
+  -- Plugin only handles functions so far
   _nothing :: r (Maybe a)
-  _tup :: r a -> r b -> r (a, b)
-  _fst :: r (a, b) -> r a
-  _snd :: r (a, b) -> r b
-  _elim_prod :: r (a, b) -> (r a -> r b -> r x) -> r x
-  _fmap :: Functor f => r (a -> b) -> r (f a) -> r (f b)
-  _const_l :: r a -> r b -> r a
-  _const_r :: r a -> r b -> r b
-  _cons :: r a -> r ([a] -> [a])
-
-  _bind :: Monad m => r (m a) -> r (a -> m b) -> r (m b)
 
   _cast :: DynVal r -> r a
   _forget :: r a -> DynVal r
 
-
-  pure :: Lift a => a -> r a
   (<*>) :: r (a -> b) -> r a -> r b
+
+_eq :: (Ops r, Eq a) => r a -> r a -> r Bool
+_comp :: Ops r => r (b -> c) -> r (a -> b) -> r (a -> c)
+_just :: Ops r => r a -> r (Maybe a)
+-- Otherwise we need any annoying `Lift` constraint on `a`.
+_tup :: Ops r => r a -> r b -> r (a, b)
+_fst :: Ops r => r (a, b) -> r a
+_snd :: Ops r => r (a, b) -> r b
+_fmap :: (Ops r, Functor f) => r (a -> b) -> r (f a) -> r (f b)
+_const_l :: Ops r => r a -> r b -> r a
+_const_r :: Ops r => r a -> r b -> r b
+_cons :: Ops r => r a -> r ([a] -> [a])
+_bind :: (Ops r, Monad m) => r (m a) -> r (a -> m b) -> r (m b)
+
+
+
+_eq a b = pure (==) <*> a <*> b
+_comp a b = pure (.) <*> a <*> b
+_just a = pure Just <*> a
+--_nothing = pure Nothing
+_tup a b = pure (,) <*> a <*> b
+_fst r = pure fst <*> r
+_snd r = pure snd <*> r
+_fmap f b = pure fmap <*> f <*> b
+
+const_l a b = a
+const_r a b = b
+
+_const_l a b = pure const_l <*> a <*> b
+_const_r a b = pure const_r <*> a <*> b
+_cons ra = pure (:) <*> ra
+_bind ra rf = pure (>>=) <*> ra <*> rf
 
 infixl 4 <*>
 
@@ -82,13 +106,6 @@ fix f = let x = f x in x
 instance Ops Code where
   type DynVal Code = ExpQ
   _if (Code a) (Code b) (Code c) = Code [|| if $$a then $$b else $$c ||]
-                                                   {-
-  _caseString (Code a) (Code b) (Code c) =
-    Code [|| case $$a of
-                "" -> $$b
-                _  -> $$c ||]
-                -}
-
   _uncons (Code a) f (Code r) =
     Code [|| case uncons $$a of
               Just (c, r) -> $$(runCode $ f (Code [||c ||]) (Code [|| r ||]))
@@ -101,28 +118,18 @@ instance Ops Code where
 
   _lam f = Code $ [|| \a ->  $$(runCode $ f (Code [|| a ||]))  ||]
 
-
-  -- Simple liftings
-  _eq (Code e1) (Code e2) = Code [|| $$e1 == $$e2 ||]
-  _comp (Code e1) (Code e2) = Code [|| $$e1 . $$e2 ||]
-  _bind (Code e1) (Code e2) = Code [|| $$e1 >>= $$e2 ||]
-  _just (Code v) = Code [|| Just $$v ||]
-  _nothing = Code [|| Nothing ||]
-  _tup (Code a) (Code b) = Code [|| ($$a, $$b) ||]
-  _fst (Code a) = Code [|| fst $$a ||]
-  _snd (Code a) = Code [|| snd $$a ||]
   _elim_prod (Code p) f = Code [|| case $$p of
                                       (a, b) -> $$(runCode $ f (Code ([|| a ||])) (Code [|| b ||])) ||]
-  _fmap (Code f) (Code a) = Code [|| fmap $$f $$a ||]
-  _const_l f1 _ = f1
-  _const_r _ f2 = f2
-  _cons (Code r) = Code [|| \rs -> $$r : rs ||]
+
+  _nothing = Code [|| Nothing ||]
 
   _cast = Code . unsafeTExpCoerce
   _forget (Code a) = unTypeQ a
 
-  pure = Code . unsafeTExpCoerce . lift
   (Code f) <*> (Code a) = Code [|| $$f $$a ||]
+
+instance Pure Code where
+  pure = Code . unsafeTExpCoerce . lift
 
 
 instance Ops Identity where
@@ -144,25 +151,17 @@ instance Ops Identity where
   _fix = fix
   _lam f = Identity (\a -> runIdentity (f (Identity a)))
 
-  _eq = liftA2 (==)
-  _comp = liftA2 (.)
-  _just = liftA Just
-  _nothing = A.pure Nothing
-  _tup = liftA2 (,)
-  _fst = liftA fst
-  _snd = liftA snd
   _elim_prod (Identity (a,b)) f = f (Identity a) (Identity b)
-  _fmap = liftA2 fmap
-  _bind = liftA2 (>>=)
-  _const_l = liftA2 (\a b -> a)
-  _const_r = liftA2 (\a b -> b)
-  _cons (Identity r) = Identity (\rs -> r:rs)
+
+  _nothing = Identity Nothing
 
   _cast = unsafeCoerce
   _forget = unsafeCoerce
 
-  pure = Identity
   (<*>) (Identity a1) (Identity a2) = Identity (a1 a2)
+
+instance Pure Identity where
+  pure = Identity
 
 
 

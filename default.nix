@@ -6,12 +6,13 @@ let
 
   f = import ./typed-cfg.nix;
 
-  haskellPackages = if compiler == "default"
-                       then pkgs.haskellPackages
-                       else pkgs.haskell.packages.${compiler};
+  nixpkgs = import ./nixpkgs.nix {};
+  haskellPackages = nixpkgs.haskellPackages;
+
 
   hp = haskellPackages.extend( sel: sup: {
     dump-core = sel.callPackage ./nix/dump-core.nix {};
+    lift-plugin = sel.callPackage ./nix/lift-plugin.nix {};
     } );
 
   drv = hp.callPackage f {};
