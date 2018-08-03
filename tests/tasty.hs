@@ -6,10 +6,13 @@ import Test.Tasty.HUnit (testCase, (@?=))
 import qualified Test as T
 import qualified TestLMS as LMS
 
+import Inspection
+
 main :: IO ()
 main =
     defaultMain $ testGroup "all"
-      [testGroup "normal"
+      [ inspect_tests
+      , testGroup "normal"
         [ testCase "parseA success" $ T.parseA "a" @?= Just ("", 'a')
         , testCase "parseA failure" $ T.parseA "b" @?= Nothing
         , testCase "parseA suffix" $ T.parseA "ab" @?= Just ("b", 'a')

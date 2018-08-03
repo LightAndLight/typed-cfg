@@ -1,12 +1,29 @@
 {-# language TemplateHaskell #-}
 {-# options_ghc -O -fplugin Test.Inspection.Plugin #-}
-module Inspection where
+{-# OPTIONS_GHC -Wno-unused-matches #-}
+module Inspection(inspect_tests) where
 
 import CFG (CFG(..), makeParser)
 import Library (many, (<.), (.>))
 import qualified LMS as LMS
 import qualified LibraryLMS as LMS
 import Test.Inspection
+
+import Test.Tasty (testGroup, TestTree)
+import Test.Tasty.HUnit (testCase, assertFailure)
+
+mkUnitTest :: String -> Result -> TestTree
+mkUnitTest s r = testCase s assertion
+  where
+    assertion =
+      case r of
+        Success _ -> return ()
+        Failure reason -> assertFailure reason
+
+inspect_tests :: TestTree
+inspect_tests = testGroup "inspection tests" [parseAorBs_test
+                                             , parseAlternate_test
+                                             , parseBrackets_test ]
 
 parseAorBsGen, parseAorBsCompile, parseAorBsHand :: String -> Maybe (String, [Char])
 parseAorBsGen = $$(makeParser (many $ Or () (Char () 'a') (Char () 'b')))
@@ -25,8 +42,12 @@ parseAorBsHand str@(c:cs) =
         Just (cs', r) -> Just (cs', c:r)
     _   -> Just (str, [])
 
-inspect ('parseAorBsGen === 'parseAorBsHand)
-inspect ('parseAorBsCompile === 'parseAorBsHand)
+
+parseAorBs_test :: TestTree
+parseAorBs_test =
+  testGroup "parseAorBs" $
+  [ mkUnitTest "gen" $(inspectTest ('parseAorBsGen === 'parseAorBsHand))
+  , mkUnitTest "lms" $(inspectTest ('parseAorBsCompile === 'parseAorBsHand)) ]
 
 
 parseAlternateGen, parseAlternateCompile, parseAlternateHand :: [Char] -> Maybe ([Char], ())
@@ -132,8 +153,11 @@ parseAlternateHand = go0
             Nothing -> Nothing
         _ -> Just (l, ())
 
-inspect ('parseAlternateGen ==- 'parseAlternateHand)
-inspect ('parseAlternateCompile ==- 'parseAlternateHand)
+parseAlternate_test :: TestTree
+parseAlternate_test =
+  testGroup "parseAlternate"
+    [ mkUnitTest "gen" $(inspectTest ('parseAlternateGen ==- 'parseAlternateHand))
+    , mkUnitTest "lms" $(inspectTest ('parseAlternateCompile ==- 'parseAlternateHand)) ]
 
 
 parseBracketsGen, parseBracketsCompile, parseBracketsHand :: String -> Maybe (String, ())
@@ -174,5 +198,8 @@ parseBracketsHand l@(x:xs) =
         Nothing -> Nothing
     _ -> Just (l, ())
 
-inspect ('parseBracketsGen === 'parseBracketsHand)
-inspect ('parseBracketsCompile === 'parseBracketsHand)
+parseBrackets_test :: TestTree
+parseBrackets_test =
+  testGroup "parseBrackets" $
+    [mkUnitTest "gen" $(inspectTest ('parseBracketsGen === 'parseBracketsHand))
+    , mkUnitTest "lms" $(inspectTest ('parseBracketsCompile === 'parseBracketsHand)) ]
