@@ -4,10 +4,13 @@ module Inspection where
 
 import CFG (CFG(..), makeParser)
 import Library (many, (<.), (.>))
+import qualified LMS as LMS
+import qualified LibraryLMS as LMS
 import Test.Inspection
 
-parseAorBsGen, parseAorBsHand :: String -> Maybe (String, [Char])
+parseAorBsGen, parseAorBsCompile, parseAorBsHand :: String -> Maybe (String, [Char])
 parseAorBsGen = $$(makeParser (many $ Or () (Char () 'a') (Char () 'b')))
+parseAorBsCompile = $$(LMS.compile (LMS.many $ LMS.Or () (LMS.Char () 'a') (LMS.Char () 'b')))
 
 parseAorBsHand [] = Just ("", [])
 parseAorBsHand str@(c:cs) =
@@ -23,9 +26,10 @@ parseAorBsHand str@(c:cs) =
     _   -> Just (str, [])
 
 inspect ('parseAorBsGen === 'parseAorBsHand)
+inspect ('parseAorBsCompile === 'parseAorBsHand)
 
 
-parseAlternateGen, parseAlternateHand :: [Char] -> Maybe ([Char], ())
+parseAlternateGen, parseAlternateCompile, parseAlternateHand :: [Char] -> Maybe ([Char], ())
 parseAlternateGen =
   $$(makeParser $
      Mu () $ \t ->
@@ -48,10 +52,50 @@ parseAlternateGen =
         Char () ')' <.
         Var () t))
 
+parseAlternateCompile =
+  $$(LMS.compile $
+     LMS.Mu () $ \t ->
+     LMS.Or ()
+       (LMS.Empty ())
+       (LMS.Char () '(' LMS..>
+        (LMS.Mu () $ \u ->
+         LMS.Or ()
+           (LMS.Empty ())
+           (LMS.Char () '{' LMS..>
+            (LMS.Mu () $ \v ->
+             LMS.Or ()
+               (LMS.Empty ())
+               (LMS.Char () '[' LMS..>
+                LMS.Var () t LMS.<.
+                LMS.Char () ']' LMS.<.
+                LMS.Var () v)) LMS.<.
+            LMS.Char () '}' LMS.<.
+            LMS.Var () u)) LMS.<.
+        LMS.Char () ')' LMS.<.
+        LMS.Var () t))
+
 parseAlternateHand = go0
   where
     -- the inspection test fails if we put `go0` first, because it doesn't know
     -- how to reason about binder ordering
+    go0 [] = Just ([], ())
+    go0 l@(x:xs) =
+      case x of
+        '(' ->
+          case go1 xs of
+            Just (xs', a) ->
+              case xs' of
+                x':xs'' ->
+                  case x' of
+                    ')' ->
+                      case go0 xs'' of
+                        Nothing -> Nothing
+                        Just (xs''', _) -> Just (xs''', a)
+                    _ -> Nothing
+                [] -> Nothing
+            Nothing -> Nothing
+        _ -> Just (l, ())
+
     go1 [] = Just ([], ())
     go1 l@(x:xs) =
       case x of
@@ -88,28 +132,11 @@ parseAlternateHand = go0
             Nothing -> Nothing
         _ -> Just (l, ())
 
-    go0 [] = Just ([], ())
-    go0 l@(x:xs) =
-      case x of
-        '(' ->
-          case go1 xs of
-            Just (xs', a) ->
-              case xs' of
-                x':xs'' ->
-                  case x' of
-                    ')' ->
-                      case go0 xs'' of
-                        Nothing -> Nothing
-                        Just (xs''', _) -> Just (xs''', a)
-                    _ -> Nothing
-                [] -> Nothing
-            Nothing -> Nothing
-        _ -> Just (l, ())
-
 inspect ('parseAlternateGen ==- 'parseAlternateHand)
+inspect ('parseAlternateCompile ==- 'parseAlternateHand)
 
 
-parseBracketsGen, parseBracketsHand :: String -> Maybe (String, ())
+parseBracketsGen, parseBracketsCompile, parseBracketsHand :: String -> Maybe (String, ())
 parseBracketsGen =
   $$(makeParser $
      Mu () $ \t ->
@@ -119,6 +146,15 @@ parseBracketsGen =
         Var () t <.
         Char () ')' <.
         Var () t))
+parseBracketsCompile =
+  $$(LMS.compile $
+     LMS.Mu () $ \t ->
+     LMS.Or ()
+       (LMS.Empty ())
+       (LMS.Char () '(' LMS..>
+        LMS.Var () t LMS.<.
+        LMS.Char () ')' LMS.<.
+        LMS.Var () t))
 
 parseBracketsHand [] = Just ([], ())
 parseBracketsHand l@(x:xs) =
@@ -139,3 +175,4 @@ parseBracketsHand l@(x:xs) =
     _ -> Just (l, ())
 
 inspect ('parseBracketsGen === 'parseBracketsHand)
+inspect ('parseBracketsCompile === 'parseBracketsHand)
