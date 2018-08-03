@@ -1,5 +1,6 @@
 {-# language TemplateHaskell #-}
 {-# options_ghc -O -fplugin Test.Inspection.Plugin #-}
+{-# OPTIONS_GHC -Wno-unused-matches #-}
 module Inspection(inspect_tests) where
 
 import CFG (CFG(..), makeParser)
@@ -8,15 +9,15 @@ import qualified LMS as LMS
 import qualified LibraryLMS as LMS
 import Test.Inspection
 
-import Test.Tasty (defaultMain, testGroup, TestTree)
-import Test.Tasty.HUnit (testCase, (@?=), assertFailure)
+import Test.Tasty (testGroup, TestTree)
+import Test.Tasty.HUnit (testCase, assertFailure)
 
 mkUnitTest :: String -> Result -> TestTree
 mkUnitTest s r = testCase s assertion
   where
     assertion =
       case r of
-        Success v -> return ()
+        Success _ -> return ()
         Failure reason -> assertFailure reason
 
 inspect_tests :: TestTree
