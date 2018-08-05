@@ -15,7 +15,7 @@ let
     lift-plugin = sel.callPackage ./nix/lift-plugin.nix {};
     } );
 
-  drv = hp.callPackage f {};
+  drv = nixpkgs.haskell.lib.doCheck (hp.callPackage f {});
 
 in
 
