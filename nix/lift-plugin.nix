@@ -6,8 +6,8 @@ mkDerivation {
   version = "0.1.0.0";
   src = fetchgit {
     url = "https://github.com/mpickering/lift-plugin";
-    sha256 = "0b5c5lz3x38d2rnqb2qmp6ysw2kvh1m0a6ij0g4kf30nsp061pcd";
-    rev = "04aedad640573db9bc3d8f2c824ae79b968624d1";
+    sha256 = "0mjrqv0ikdf2kjalpm37pn6yln3y87g8ddi6az9hsy71bkh2w9i7";
+    rev = "e86c94a1bb27c848f9dcd7800ae9fb9e7f26e171";
   };
   postUnpack = "sourceRoot+=/lift-plugin; echo source root reset to $sourceRoot";
   libraryHaskellDepends = [
