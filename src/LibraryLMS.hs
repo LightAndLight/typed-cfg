@@ -1,5 +1,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE NoImplicitPrelude #-}
+{-# LANGUAGE DeriveLift #-}
+{-# OPTIONS -fplugin=LiftPlugin #-}
 module LibraryLMS where
 
 import LMS
@@ -27,6 +29,26 @@ many c = Mu () $ \x -> Or () (map' (_const_l (pure [])) $ Empty ()) (map' _cons 
 
 some :: Lift a => CFG () v c a -> CFG () v c [a]
 some c = map' _cons c <.> many c
+
+(<|>) = Or ()
+var = Var ()
+
+mu = Mu ()
+chr = Char ()
+empty = Empty ()
+
+data SExp = Atom Char | SSeq [SExp] deriving Lift
+
+atom_fn :: Ops r => r Char -> r SExp
+atom_fn c = pure Atom <*> c
+
+bracket :: Ops r => r [SExp] -> r SExp
+bracket c = pure SSeq <*> c
+
+atom = map' atom_fn (chr 'a')
+
+sexp = mu $ \self -> atom <|> (map' bracket (chr '(' .> (many (var self)) <. chr ')'))
+
 
 -- | T → ε | "(" T ")" T
 brackets :: (Char -> c) -> CFG () v c ()
