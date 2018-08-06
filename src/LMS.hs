@@ -228,7 +228,7 @@ data TyError c where
   NotDisjoint :: ShowCFG c a -> ShowCFG c a -> TyError c
   Ambiguous :: ShowCFG c a -> ShowCFG c b -> TyError c
   Null :: ShowCFG c a -> TyError c
-  Guarded :: ShowCFG c a -> TyError c
+  Guarded :: (Ty c) -> ShowCFG c a -> TyError c
   NotGuarded :: ShowCFG c a -> TyError c
 deriving instance Show c => Show (TyError c)
 
@@ -338,7 +338,7 @@ typeOf = go [0..] [] False
     go supply ctxt allowGuarded a@(Var () (MkVar n)) =
       let t = ctxt !! n in
       if not allowGuarded && _guarded t
-      then Left $ Guarded (ShowCFG a)
+      then Left $ Guarded t (ShowCFG a)
       else A.pure $ Var t (MkVar n)
 
 showCFG :: Show c => CFG x Var c a -> String
