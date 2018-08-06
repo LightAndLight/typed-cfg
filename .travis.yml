@@ -1,5 +1,8 @@
 language: nix
-script: nix-build --argstr compiler ghc843
+script:
+- nix-env -iA cachix -f https://github.com/NixOS/nixpkgs/tarball/db557aab7b690f5e0e3348459f2e4dc8fd0d9298
+- cachix use mpickering
+- nix-build
 branches:
   only:
   - master
