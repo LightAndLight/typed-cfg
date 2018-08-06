@@ -1,5 +1,14 @@
 language: nix
-script: nix-build --argstr compiler ghc843
+sudo: required
+before_script:
+  - sudo mount -o remount,exec,size=4G,mode=755 /run/user || true
+  - sudo mkdir -p /etc/nix
+  - echo "trusted-users = root $USER" | sudo tee -a /etc/nix/nix.conf
+  - sudo launchctl kickstart -k system/org.nixos.nix-daemon || true
+script:
+- nix-env -iA cachix -f https://github.com/NixOS/nixpkgs/tarball/db557aab7b690f5e0e3348459f2e4dc8fd0d9298
+- cachix use mpickering
+- nix-build
 branches:
   only:
   - master

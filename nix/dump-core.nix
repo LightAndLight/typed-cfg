@@ -5,9 +5,9 @@ mkDerivation {
   pname = "dump-core";
   version = "0.1.3";
   src = fetchgit {
-    url = "https://github.com/mpickering/dump-core.git";
-    sha256 = "0him2330sf1s321zy857c8aaqlishlcknf1yi612cx86zgvs8axa";
-    rev = "52ac843d9369bebb69a6e068913cc90ed55de20d";
+    url = "https://github.com/mpickering/dump-core";
+    sha256 = "1mg8zh9ak91vdgm8i8ng9sbg79h66s5srf38jk5r0wga36m0k5al";
+    rev = "7cb4ec3d3eec5484a70224c8ca5a802b9a0c2f0b";
   };
   enableSeparateDataOutput = true;
   libraryHaskellDepends = [
