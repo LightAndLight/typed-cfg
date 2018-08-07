@@ -23,9 +23,12 @@ infixl 4 <.
 (.>) a b = map' (\r -> _lam $ \v -> _const_r r v) a <.> b
 infixl 4 .>
 
-
 many :: Lift a => CFG () v c a -> CFG () v c [a]
-many c = Mu () $ \x -> Or () (map' (_const_l (pure [])) $ Empty ()) (map' _cons c <.> Var () x)
+many c =
+  Mu () $ \x ->
+  Or ()
+    (map' (_const_l (pure [])) $ Empty ())
+    (map' _cons c <.> Var () x)
 
 some :: Lift a => CFG () v c a -> CFG () v c [a]
 some c = map' _cons c <.> many c
@@ -37,7 +40,7 @@ mu = Mu ()
 chr = Char ()
 empty = Empty ()
 
-data SExp = Atom Char | SSeq [SExp] deriving Lift
+data SExp = Atom Char | SSeq [SExp] deriving (Lift, Show)
 
 atom_fn :: Ops r => r Char -> r SExp
 atom_fn c = pure Atom <*> c
@@ -47,8 +50,12 @@ bracket c = pure SSeq <*> c
 
 atom = map' atom_fn (chr 'a')
 
-sexp = mu $ \self -> atom <|> (map' bracket (chr '(' .> (many (var self)) <. chr ')'))
-
+sexp =
+  mu $
+  \self ->
+    atom <|>
+    map' bracket ((chr '(' .> many (var self)) <r chr ')')
+  r
 
 -- | T → ε | "(" T ")" T
 brackets :: (Char -> c) -> CFG () v c ()

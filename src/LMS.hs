@@ -241,10 +241,10 @@ instance Show c => Show (ShowCFG c a) where
 
 {-# inline typeOf #-}
 typeOf :: (Show c, Eq c) => CFG () Var c a -> Either (TyError c) (CFG (Ty c) Var c a)
-typeOf = go [0..] [] False
+typeOf = go [0..] [] 
   where
-    go :: (Show c, Eq c) => [Int] -> [Ty c] -> Bool -> CFG () Var c a -> Either (TyError c) (CFG (Ty c) Var c a)
-    go supply ctxt allowGuarded (Pure () a) =
+    go :: (Show c, Eq c) => [Int] -> [Ty c] -> CFG () Var c a -> Either (TyError c) (CFG (Ty c) Var c a)
+    go supply ctxt (Pure () a) =
       let
         t =
           Ty
@@ -254,8 +254,8 @@ typeOf = go [0..] [] False
           , _guarded = True
           }
       in A.pure $ Pure t a
-    go supply ctxt allowGuarded (NotNull () g) = do
-      g' <- go supply ctxt allowGuarded g
+    go supply ctxt (NotNull () g) = do
+      g' <- go supply ctxt g
       let t = cfgAnn g'
       if _null t
         then Left $ Null (ShowCFG g)
@@ -269,14 +269,20 @@ typeOf = go [0..] [] False
             , _guarded = _guarded t
             }
         in A.pure $ NotNull t' g'
-    go supply ctxt allowGuarded (Bot ()) =
+    go supply ctxt (Bot ()) =
       let
-        t = Ty { _null = False, _first = [], _followLast = [], _guarded = True }
+        t =
+          Ty
+          { _null = False
+          , _first = []
+          , _followLast = []
+          , _guarded = True
+          }
       in A.pure (Bot t)
-    go supply ctxt allowGuarded (Or () f g) = do
-      f' <- go supply ctxt allowGuarded f
+    go supply ctxt (Or () f g) = do
+      f' <- go supply ctxt f
       let t = cfgAnn f'
-      g' <- go supply ctxt allowGuarded g
+      g' <- go supply ctxt g
       let t' = cfgAnn g'
       if not (t # t')
         then Left $ NotDisjoint (ShowCFG f) (ShowCFG g)
@@ -290,41 +296,62 @@ typeOf = go [0..] [] False
             , _guarded = _guarded t && _guarded t'
             }
         in A.pure (Or t'' f' g')
-    go supply ctxt allowGuarded (Empty ()) =
+    go supply ctxt (Empty ()) =
       let
-        t = Ty { _null = True, _first = [], _followLast = [], _guarded = True }
+        t =
+          Ty
+          { _null = True
+          , _first = []
+          , _followLast = []
+          , _guarded = True
+          }
       in A.pure (Empty t)
-    go supply ctxt allowGuarded (Seq () a (Bot ())) = go supply ctxt allowGuarded (Bot ())
-    go supply ctxt allowGuarded (Seq () a b) = do
-      a' <- go supply ctxt allowGuarded a
+    go supply ctxt (Seq () _ (Bot ())) = go supply ctxt (Bot ())
+    go supply ctxt (Seq () (Bot ()) _) = go supply ctxt (Bot ())
+    go supply ctxt (Seq () a b) = do
+      a' <- go supply ctxt a
       let t = cfgAnn a'
-      b' <- go supply ctxt (not $ _null t) b
+      b' <- go supply ((\e -> e { _guarded = False}) <$> ctxt) b
       let t' = cfgAnn b'
       if not (t .*. t')
         then Left $ Ambiguous (ShowCFG a) (ShowCFG b)
         else
         let
           t'' =
+            -- removed some redundancy implied by t .*. t'
             Ty
-            { _null = _null t && _null t'
-            , _first = _first t `union` (if _null t then _first t' else [])
-            , _followLast = _followLast t' `union` (if _null t' then _first t' `union` _followLast t else [])
+            { _null = False
+            , _first = _first t
+            , _followLast =
+                _followLast t' `union`
+                (if _null t' then _first t' `union` _followLast t else [])
             , _guarded = _guarded t
             }
         in A.pure (Seq t'' a' b')
-    go supply ctxt allowGuarded (Char () c) =
+    go supply ctxt (Char () c) =
       let
-        t = Ty { _null = False, _first = [c], _followLast = [], _guarded = True }
+        t =
+          Ty
+          { _null = False
+          , _first = [c]
+          , _followLast = []
+          , _guarded = True
+          }
       in A.pure (Char t c)
-    go supply ctxt allowGuarded (Map () f a) = do
-      a' <- go supply ctxt allowGuarded a
+    go supply ctxt (Map () f a) = do
+      a' <- go supply ctxt a
       let t = cfgAnn a'
       A.pure (Map t f a')
-    go (s:supply) ctxt allowGuarded (Mu () f) = do
-      res <- fix (\ty -> go supply (cfgAnn ty:ctxt) allowGuarded (f $ MkVar s))
+    go (s:supply) ctxt (Mu () f) = do
+      -- Binding order mistake was repeated
+      res <- fix (\ty -> go supply (ctxt ++ [cfgAnn ty]) (f $ MkVar s))
       let t = cfgAnn res
       if _guarded t
-        then A.pure (Mu t $ fromRight (error "impossible") . go supply (t:ctxt) allowGuarded . f)
+        -- I think the remaining problem is here in trying to cache
+        -- the computed type, because we can't guarantee that the argument
+        -- to this new function will lookup the correct variable in the
+        -- captured context
+        then A.pure (Mu t $ fromRight (error "impossible") . go supply (ctxt ++ [t]) . f)
         else Left $ NotGuarded (ShowCFG $ Mu () f)
       where
         fix f = inner =<< typeOf (Bot ())
@@ -334,12 +361,11 @@ typeOf = go [0..] [] False
               if cfgAnn input == cfgAnn output
                 then A.pure output
                 else inner output
-    go [] _ _ (Mu _ _) = error "impossible"
-    go supply ctxt allowGuarded a@(Var () (MkVar n)) =
-      let t = ctxt !! n in
-      if not allowGuarded && _guarded t
-      then Left $ Guarded t (ShowCFG a)
-      else A.pure $ Var t (MkVar n)
+    go [] _ (Mu _ _) = error "impossible"
+    -- My interpretation of section 3 is that guardedness doesn't matter
+    -- for variable lookup
+    go supply ctxt (Var () (MkVar n)) =
+      let t = ctxt !! n in A.pure $ Var t (MkVar n)
 
 showCFG :: Show c => CFG x Var c a -> String
 showCFG = go [0..]
