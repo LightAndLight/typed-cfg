@@ -21,9 +21,12 @@ mkUnitTest s r = testCase s assertion
         Failure reason -> assertFailure reason
 
 inspect_tests :: TestTree
-inspect_tests = testGroup "inspection tests" [parseAorBs_test
-                                             , parseAlternate_test
-                                             , parseBrackets_test ]
+inspect_tests =
+  testGroup "inspection tests"
+  [ parseAorBs_test
+  , parseAlternate_test
+  , parseBrackets_test
+  ]
 
 parseAorBsGen, parseAorBsCompile, parseAorBsHand :: String -> Maybe (String, [Char])
 parseAorBsGen = $$(makeParser (many $ Or () (Char () 'a') (Char () 'b')))

@@ -54,8 +54,7 @@ sexp =
   mu $
   \self ->
     atom <|>
-    map' bracket ((chr '(' .> many (var self)) <r chr ')')
-  r
+    map' bracket ((chr '(' .> many (var self)) <. chr ')')
 
 -- | T → ε | "(" T ")" T
 brackets :: (Char -> c) -> CFG () v c ()

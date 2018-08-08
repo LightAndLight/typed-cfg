@@ -20,15 +20,11 @@ module LMS (module LMS, Pure(..)) where
 -- interpreter or a compiler.
 import Unsafe.Coerce
 
-import Control.Applicative ((<|>), liftA2, liftA)
 import qualified Control.Applicative as A
 import Control.Lens.Cons (Cons, uncons)
-import Control.Monad ((<=<), unless, when)
-import Data.Either (fromRight)
-import Data.List (intersect, union, foldl')
+import Data.List (intersect, union)
 import Data.List.NonEmpty (NonEmpty(..), toList)
 import Data.Semigroup ((<>))
-import Data.Traversable (for)
 
 import Language.Haskell.TH.Lib
 import Language.Haskell.TH.Syntax
@@ -196,19 +192,61 @@ data CFG ann var c a where
   Mu :: ann -> (var c a -> CFG ann var c a) -> CFG ann var c a
   Map :: ann -> CodeOps (a -> b) -> CFG ann var c a -> CFG ann var c b
 
-cfgAnn :: CFG a b c d -> a
+data CFG' ann c a where
+  Pure' :: ann -> CodeOps a -> CFG' ann c a
+  Bot' :: ann -> CFG' ann c a
+  Or' :: ann -> CFG' ann c a -> CFG' ann c a -> CFG' ann c a
+  Empty' :: ann -> CFG' ann c ()
+  Char' :: ann -> c -> CFG' ann c c
+  Seq' :: ann -> CFG' ann c (a -> b) -> CFG' ann c a -> CFG' ann c b
+  NotNull' :: ann -> CFG' ann c a -> CFG' ann c a
+  Var' :: ann -> Int -> CFG' ann c a
+  Mu' :: ann -> Int -> CFG' ann c a -> CFG' ann c a
+  Map' :: ann -> CodeOps (a -> b) -> CFG' ann c a -> CFG' ann c b
+
+lower :: CFG a Var c d -> CFG' a c d
+lower = go [0..]
+  where
+    go :: [Int] -> CFG a Var c d -> CFG' a c d
+    go _ (Pure a b) = Pure' a b
+    go _ (Bot a) = Bot' a
+    go supply (Or a b c) = Or' a (go supply b) (go supply c)
+    go _ (Empty a) = Empty' a
+    go _ (Char a b) = Char' a b
+    go supply (Seq a b c) = Seq' a (go supply b) (go supply c)
+    go supply (NotNull a b) = NotNull' a (go supply b)
+    go _ (Var a (MkVar n)) = Var' a n
+    go (s:supply) (Mu a f) = Mu' a s (go supply $ f (MkVar s))
+    go [] _ = error "impossible"
+    go supply (Map a b c) = Map' a b (go supply c)
+
+cfgAnn :: CFG' a c d -> a
 cfgAnn e =
   case e of
-    Pure a _ -> a
-    Bot a -> a
-    Or a _ _ -> a
-    Empty a -> a
-    Char a _ -> a
-    Seq a _ _ -> a
-    NotNull a _ -> a
-    Var a _ -> a
-    Mu a _ -> a
-    Map a _ _ -> a
+    Pure' a _ -> a
+    Bot' a -> a
+    Or' a _ _ -> a
+    Empty' a -> a
+    Char' a _ -> a
+    Seq' a _ _ -> a
+    NotNull' a _ -> a
+    Var' a _ -> a
+    Mu' a _ _ -> a
+    Map' a _ _ -> a
+
+setCfgAnn :: a -> CFG' a c d -> CFG' a c d
+setCfgAnn a e =
+  case e of
+    Pure' _ b -> Pure' a b
+    Bot' _ -> Bot' a
+    Or' _ b c -> Or' a b c
+    Empty' _ -> Empty' a
+    Char' _ b -> Char' a b
+    Seq' _ b c -> Seq' a b c
+    NotNull' _ b -> NotNull' a b
+    Var' _ b -> Var' a b
+    Mu' _ b c -> Mu' a b c
+    Map' _ b c -> Map' a b c
 
 data Ty c
   = Ty
@@ -234,17 +272,20 @@ deriving instance Show c => Show (TyError c)
 
 newtype Var c a = MkVar Int
 newtype THVar c a = MkTHVar ExpQ
-newtype ShowCFG c a = ShowCFG (CFG () Var c a)
+data ShowCFG c a = forall ann. ShowCFG (CFG' ann c a)
 
 instance Show c => Show (ShowCFG c a) where
   show (ShowCFG a) = "(" ++ showCFG a ++ ")"
 
-{-# inline typeOf #-}
-typeOf :: (Show c, Eq c) => CFG () Var c a -> Either (TyError c) (CFG (Ty c) Var c a)
-typeOf = go [0..] [] 
+typeOf :: (Show c, Eq c) => CFG' () c a -> Either (TyError c) (CFG' (Ty c) c a)
+typeOf = go []
   where
-    go :: (Show c, Eq c) => [Int] -> [Ty c] -> CFG () Var c a -> Either (TyError c) (CFG (Ty c) Var c a)
-    go supply ctxt (Pure () a) =
+    go
+      :: (Show c, Eq c)
+      => [Ty c]
+      -> CFG' () c a
+      -> Either (TyError c) (CFG' (Ty c) c a)
+    go _ (Pure' () a) =
       let
         t =
           Ty
@@ -253,9 +294,9 @@ typeOf = go [0..] []
           , _followLast = []
           , _guarded = True
           }
-      in A.pure $ Pure t a
-    go supply ctxt (NotNull () g) = do
-      g' <- go supply ctxt g
+      in A.pure $ Pure' t a
+    go ctxt (NotNull' () g) = do
+      g' <- go ctxt g
       let t = cfgAnn g'
       if _null t
         then Left $ Null (ShowCFG g)
@@ -268,21 +309,21 @@ typeOf = go [0..] []
             , _followLast = _followLast t
             , _guarded = _guarded t
             }
-        in A.pure $ NotNull t' g'
-    go supply ctxt (Bot ()) =
+        in A.pure $ NotNull' t' g'
+    go _ (Bot' ()) =
       let
         t =
           Ty
           { _null = False
           , _first = []
           , _followLast = []
-          , _guarded = True
+          , _guarded = False
           }
-      in A.pure (Bot t)
-    go supply ctxt (Or () f g) = do
-      f' <- go supply ctxt f
+      in A.pure (Bot' t)
+    go ctxt (Or' () f g) = do
+      f' <- go ctxt f
       let t = cfgAnn f'
-      g' <- go supply ctxt g
+      g' <- go ctxt g
       let t' = cfgAnn g'
       if not (t # t')
         then Left $ NotDisjoint (ShowCFG f) (ShowCFG g)
@@ -295,8 +336,8 @@ typeOf = go [0..] []
             , _followLast = _followLast t `union` _followLast t'
             , _guarded = _guarded t && _guarded t'
             }
-        in A.pure (Or t'' f' g')
-    go supply ctxt (Empty ()) =
+        in A.pure (Or' t'' f' g')
+    go _ (Empty' ()) =
       let
         t =
           Ty
@@ -305,13 +346,13 @@ typeOf = go [0..] []
           , _followLast = []
           , _guarded = True
           }
-      in A.pure (Empty t)
-    go supply ctxt (Seq () _ (Bot ())) = go supply ctxt (Bot ())
-    go supply ctxt (Seq () (Bot ()) _) = go supply ctxt (Bot ())
-    go supply ctxt (Seq () a b) = do
-      a' <- go supply ctxt a
+      in A.pure (Empty' t)
+    go ctxt (Seq' () _ (Bot' ())) = go ctxt (Bot' ())
+    go ctxt (Seq' () (Bot' ()) _) = go ctxt (Bot' ())
+    go ctxt (Seq' () a b) = do
+      a' <- go ctxt a
       let t = cfgAnn a'
-      b' <- go supply ((\e -> e { _guarded = False}) <$> ctxt) b
+      b' <- go ctxt b
       let t' = cfgAnn b'
       if not (t .*. t')
         then Left $ Ambiguous (ShowCFG a) (ShowCFG b)
@@ -327,8 +368,8 @@ typeOf = go [0..] []
                 (if _null t' then _first t' `union` _followLast t else [])
             , _guarded = _guarded t
             }
-        in A.pure (Seq t'' a' b')
-    go supply ctxt (Char () c) =
+        in A.pure (Seq' t'' a' b')
+    go _ (Char' () c) =
       let
         t =
           Ty
@@ -337,52 +378,50 @@ typeOf = go [0..] []
           , _followLast = []
           , _guarded = True
           }
-      in A.pure (Char t c)
-    go supply ctxt (Map () f a) = do
-      a' <- go supply ctxt a
-      let t = cfgAnn a'
-      A.pure (Map t f a')
-    go (s:supply) ctxt (Mu () f) = do
+      in A.pure (Char' t c)
+    go ctxt (Map' () f a) = do
+      a' <- go ctxt a
+      A.pure (Map' (cfgAnn a') f a')
+    go ctxt (Mu' () s f) = do
       -- Binding order mistake was repeated
-      res <- fix (\ty -> go supply (ctxt ++ [cfgAnn ty]) (f $ MkVar s))
+      res <- fix (\ty -> go (ctxt ++ [cfgAnn ty]) f)
       let t = cfgAnn res
       if _guarded t
-        -- I think the remaining problem is here in trying to cache
-        -- the computed type, because we can't guarantee that the argument
-        -- to this new function will lookup the correct variable in the
-        -- captured context
-        then A.pure (Mu t $ fromRight (error "impossible") . go supply (ctxt ++ [t]) . f)
-        else Left $ NotGuarded (ShowCFG $ Mu () f)
+        then A.pure (Mu' t s res)
+        else Left $ NotGuarded (ShowCFG $ Mu' () s f)
       where
-        fix f = inner =<< typeOf (Bot ())
+        fix :: (Show b, Eq b) => (CFG' (Ty b) b c -> Either (TyError b) (CFG' (Ty b) b c)) -> Either (TyError b) (CFG' (Ty b) b c)
+        fix f = inner =<< typeOf (Bot' ())
           where
+            inner input = do
+              case f input of
+                Left{} -> A.pure input
+                Right output ->
+                  if cfgAnn input == cfgAnn output
+                    then A.pure output
+                    else inner output
+            {-
             inner input = do
               output <- f input
               if cfgAnn input == cfgAnn output
                 then A.pure output
                 else inner output
-    go [] _ (Mu _ _) = error "impossible"
+-}
     -- My interpretation of section 3 is that guardedness doesn't matter
     -- for variable lookup
-    go supply ctxt (Var () (MkVar n)) =
-      let t = ctxt !! n in A.pure $ Var t (MkVar n)
+    go ctxt (Var' () n) = A.pure $ Var' (ctxt !! n) n
 
-showCFG :: Show c => CFG x Var c a -> String
-showCFG = go [0..]
-  where
-    go :: Show c => [Int] -> CFG x Var c a -> String
-    go supply Pure{} = "value"
-    go supply Bot{} = "_|_"
-    go supply (Or _ a b) = "(" ++ go supply a ++ ") \\/ (" ++ go supply b ++ ")"
-    go supply Empty{} = "e"
-    go supply (Char _ c) = show c
-    go supply (Seq _ a b) = "(" ++ go supply a ++ ") . ("  ++ go supply b ++ ")"
-    go supply (NotNull _ a) = "[" ++ go supply a ++ "]"
-    go supply (Var _ (MkVar n)) = "var" ++ show n
-    go (s:supply) (Mu _ f) =
-        "mu var" ++ show s ++ ". " ++ go supply (f $ MkVar s)
-    go [] (Mu _ f) = error "impossible"
-    go supply (Map _ _ a) = go supply a
+showCFG :: Show c => CFG' x c a -> String
+showCFG Pure'{} = "value"
+showCFG Bot'{} = "_|_"
+showCFG (Or' _ a b) = "(" ++ showCFG a ++ ") \\/ (" ++ showCFG b ++ ")"
+showCFG Empty'{} = "e"
+showCFG (Char' _ c) = show c
+showCFG (Seq' _ a b) = "(" ++ showCFG a ++ ") . ("  ++ showCFG b ++ ")"
+showCFG (NotNull' _ a) = "[" ++ showCFG a ++ "]"
+showCFG (Var' _ n) = "var" ++ show n
+showCFG (Mu' _ s f) = "mu var" ++ show s ++ ". " ++ showCFG f
+showCFG (Map' _ _ a) = showCFG a
 
 data ParseError c
   = Unexpected c [c]
@@ -390,72 +429,70 @@ data ParseError c
   | Bottom
   deriving Show
 
-parse :: Eq c => CFG (Ty c) Var c a -> [c] -> Either (ParseError c) ([c], a)
-parse = go [0..] []
+parse :: Eq c => CFG' (Ty c) c a -> [c] -> Either (ParseError c) ([c], a)
+parse = go []
   where
-    go :: Eq c => [Int] -> [[c] -> Maybe ([c], ())] -> CFG (Ty c) Var c a -> [c] -> Either (ParseError c) ([c], a)
-    go supply ctxt cfg str =
+    go :: Eq c => [[c] -> Maybe ([c], ())] -> CFG' (Ty c) c a -> [c] -> Either (ParseError c) ([c], a)
+    go ctxt cfg str =
       case cfg of
-        Pure _ a -> Right (str, pureCode a)
-        Bot{} -> Left Bottom
-        Or ty a b ->
+        Pure' _ a -> Right (str, pureCode a)
+        Bot'{} -> Left Bottom
+        Or' ty a b ->
           let
             ta = cfgAnn a
             tb = cfgAnn b
           in
             case str of
               c:_
-                | c `elem` _first ta -> go supply ctxt a str
-                | c `elem` _first tb -> go supply ctxt b str
+                | c `elem` _first ta -> go ctxt a str
+                | c `elem` _first tb -> go ctxt b str
               _
-                | _null ta -> go supply ctxt a str
-                | _null tb -> go supply ctxt b str
+                | _null ta -> go ctxt a str
+                | _null tb -> go ctxt b str
                 | otherwise ->
                     Left $ case str of
                       c : _ -> Unexpected c $ _first ta ++ _first tb
                       [] -> UnexpectedEof $ _first ta ++ _first tb
-        Empty{} -> A.pure (str, ())
-        Char ty c'
+        Empty'{} -> A.pure (str, ())
+        Char' ty c'
           | c:cs <- str, c == c' -> A.pure (cs, c')
           | otherwise ->
               Left $ case str of
                 c : _ -> Unexpected c [c']
                 [] -> UnexpectedEof [c']
-        Seq ty a b -> do
-          (str', a') <- go supply ctxt a str
-          (str'', b') <- go supply ctxt b str'
+        Seq' ty a b -> do
+          (str', a') <- go ctxt a str
+          (str'', b') <- go ctxt b str'
           A.pure (str'', a' b')
-        NotNull _ a -> go supply ctxt a str
-        Var ty (MkVar n) -> unsafeCoerce (ctxt !! n) str
-        Mu ty f
-          | s:supply' <- supply ->
-              let
-                f' = go supply' (unsafeCoerce f' : ctxt) (f $ MkVar s)
-              in
-                f' str
-          | otherwise -> error "impossible"
-        Map ty f a
-          | c:_ <- str, c `elem` _first ty -> fmap (pureCode f) <$> go supply ctxt a str
-          | _null ty -> fmap (pureCode f) <$> go supply ctxt a str
+        NotNull' _ a -> go ctxt a str
+        Var' ty n -> unsafeCoerce (ctxt !! n) str
+        Mu' ty s f ->
+          let
+            f' = go (ctxt ++ [unsafeCoerce f']) f
+          in
+            f' str
+        Map' ty f a
+          | c:_ <- str, c `elem` _first ty -> fmap (pureCode f) <$> go ctxt a str
+          | _null ty -> fmap (pureCode f) <$> go ctxt a str
           | otherwise ->
               let ta = cfgAnn a in
               Left $ case str of
                 c : _ -> Unexpected c $ _first ta
                 [] -> UnexpectedEof $ _first ta
 
-data IR var c a where
-  IR_Pure :: Ty c -> CodeOps a -> IR var c a
-  IR_Bot :: Ty c -> IR var c a
-  IR_Or :: Ty c -> NonEmpty (IR var c a) -> IR var c a
-  IR_Empty :: Ty c -> IR var c ()
-  IR_Char :: Ty c -> c -> IR var c c
-  IR_Seq :: Ty c -> IR var c (a -> b) -> IR var c a -> IR var c b
-  IR_NotNull :: Ty c -> IR var c a -> IR var c a
-  IR_Var :: Ty c -> var c a -> IR var c a
-  IR_Mu :: Ty c -> (var c a -> IR var c a) -> IR var c a
-  IR_Map :: Ty c -> (CodeOps (a -> b)) -> IR var c a -> IR var c b
+data IR c a where
+  IR_Pure :: Ty c -> CodeOps a -> IR c a
+  IR_Bot :: Ty c -> IR c a
+  IR_Or :: Ty c -> NonEmpty (IR c a) -> IR c a
+  IR_Empty :: Ty c -> IR c ()
+  IR_Char :: Ty c -> c -> IR c c
+  IR_Seq :: Ty c -> IR c (a -> b) -> IR c a -> IR c b
+  IR_NotNull :: Ty c -> IR c a -> IR c a
+  IR_Var :: Ty c -> Int -> IR c a
+  IR_Mu :: Ty c -> IR c a -> IR c a
+  IR_Map :: Ty c -> (CodeOps (a -> b)) -> IR c a -> IR c b
 
-ir_str :: IR var c a -> String
+ir_str :: IR c a -> String
 ir_str e =
   case e of
     IR_Pure a _ -> "pure"
@@ -469,7 +506,7 @@ ir_str e =
     IR_Mu a _ -> "MU"
     IR_Map a _ _ -> "MAP"
 
-irAnn :: IR b c d -> Ty c
+irAnn :: IR c d -> Ty c
 irAnn e =
   case e of
     IR_Pure a _ -> a
@@ -483,21 +520,21 @@ irAnn e =
     IR_Mu a _ -> a
     IR_Map a _ _ -> a
 
-toIR :: CFG (Ty c) v c a -> IR v c a
+toIR :: CFG' (Ty c) c a -> IR c a
 toIR e = case e of
-  Pure t a -> IR_Pure t a
-  Bot t ->  IR_Bot t
-  Or t a b -> IR_Or t (fmap toIR (ors a <> ors b))
-  Empty t -> IR_Empty t
-  Char t c -> IR_Char t c
-  Seq t a b -> IR_Seq t (toIR a) (toIR b)
-  NotNull t a -> IR_NotNull t (toIR a)
-  Var t v -> IR_Var t v
-  Mu t f -> IR_Mu t (toIR . f)
-  Map t (CodeOps f) (Map _ (CodeOps g) a) -> toIR (Map t (CodeOps (_comp f g)) a)
-  Map t f a -> IR_Map t f (toIR a)
+  Pure' t a -> IR_Pure t a
+  Bot' t ->  IR_Bot t
+  Or' t a b -> IR_Or t (fmap toIR (ors a <> ors b))
+  Empty' t -> IR_Empty t
+  Char' t c -> IR_Char t c
+  Seq' t a b -> IR_Seq t (toIR a) (toIR b)
+  NotNull' t a -> IR_NotNull t (toIR a)
+  Var' t v -> IR_Var t v
+  Mu' t s f -> IR_Mu t (toIR f)
+  Map' t (CodeOps f) (Map' _ (CodeOps g) a) -> toIR (Map' t (CodeOps (_comp f g)) a)
+  Map' t f a -> IR_Map t f (toIR a)
   where
-    ors (Or _ a b) = ors a <> ors b
+    ors (Or' _ a b) = ors a <> ors b
     ors a = A.pure a
 
 type Context r c = [DynVal r]
@@ -519,7 +556,7 @@ makeParser_lms
   => CFG () Var c a
   -> r (s -> Maybe (s, a))
 makeParser_lms =
-  go_lms [0..] [] . either (error . show) (toIR) . typeOf
+  go_lms [] . either (error . show) (toIR) . typeOf . lower
 
 elem_lms
   :: (Lift a, Eq a, Ops r)
@@ -537,11 +574,10 @@ elem_lms c r found notFound =
 go_lms
   :: forall s c a r
    . (Lift c, Eq c, Cons s s c c, Ops r)
-  => [Int]
-  -> Context r c
-  -> IR Var c a
+  => Context r c
+  -> IR c a
   -> r (s -> Maybe (s, a))
-go_lms supply context e =
+go_lms context e =
   case e of
     IR_Pure _ (lmsCode -> a) -> _lam $ \cs -> _just (_tup cs a)
     IR_Bot _ -> _lam $ \_ -> _nothing
@@ -550,31 +586,29 @@ go_lms supply context e =
          \x -> _uncons x
                   (\c cs -> _if (_eq (pure c') c) (_just (_tup cs c)) (_nothing))
                   (_nothing)
-    IR_Or _ bs -> ir_ors_lms supply context bs
+    IR_Or _ bs -> ir_ors_lms context bs
     IR_Empty _ -> _lam $ \x -> _just (_tup x (pure ()))
     IR_Seq _ a b ->
       _lam $ \x ->
-         _bind (go_lms supply context a <*> x)
+         _bind (go_lms context a <*> x)
                (_lam $ \r -> _elim_prod r (\x' a' ->
-                              _bind (go_lms supply context b <*> x')
+                              _bind (go_lms context b <*> x')
                                     (_lam $ \r' -> _elim_prod r' (\x'' b' ->
                                                       _just (_tup x'' (a' <*> b'))))))
-    IR_NotNull _ a -> go_lms supply context a
+    IR_NotNull _ a -> go_lms context a
     IR_Map ty (lmsCode -> f) ta ->
         let r = _first ty
         in
           _lam $ \str ->
-            _let (_lam (\mr -> _fmap (_lam $ \ab -> _fmap f ab) mr) `_comp` go_lms supply context ta) $ \success ->
-            _let (_lam $ \str -> _if (pure $ _null ty) (success <*> str) (_nothing)) $ \fallThrough ->
+            _let (_lam (\mr -> _fmap (_lam $ \ab -> _fmap f ab) mr) `_comp` go_lms context ta) $ \success ->
+            _let (_lam $ \str' -> _if (pure $ _null ty) (success <*> str') (_nothing)) $ \fallThrough ->
                 _uncons str (\c _ -> elem_lms c r (_lam $ \_ -> success <*> str) (fallThrough <*> str)) (fallThrough <*> str)
 
-    IR_Var ty (MkVar n) ->
+    IR_Var _ n ->
       _cast (context !! n)
 
-    IR_Mu ty f
-      | s:supply' <- supply -> do
-          _fix (\x -> go_lms supply' (context ++ [ _forget x ] ) (f $ MkVar s))
-      | otherwise -> error "impossible"
+    IR_Mu _ f ->
+      _fix (\x -> go_lms (context ++ [ _forget x ] ) f)
 
 _const :: Ops r => r a -> r (b -> a)
 _const r = _lam $ (\_ -> r)
@@ -582,16 +616,15 @@ _const r = _lam $ (\_ -> r)
 ir_ors_lms
   :: forall s c a r
   . (Lift c, Eq c, Cons s s c c, Ops r)
-  => [Int]
-  -> Context r c
-  -> NonEmpty (IR Var c a)
+  => Context r c
+  -> NonEmpty (IR c a)
   -> r (s -> Maybe (s, a))
-ir_ors_lms supply context as =
+ir_ors_lms context as =
   let
     fallThrough =
       case filter (_null . irAnn) (toList as) of
         [] -> _lam $ \_ -> _nothing
-        a : _ -> go_lms supply context a
+        a : _ -> go_lms context a
   in
     _let fallThrough $ \ff -> _lam $
       \str -> _uncons str (\c _ -> foldr (comb c) ff as <*> str) (ff <*> str)
@@ -599,11 +632,11 @@ ir_ors_lms supply context as =
     comb
       :: (Lift c, Eq c, Cons s s c c, Ops r)
       => r c
-      -> IR Var c a
+      -> IR c a
       -> r (s -> Maybe (s, a))
       -> r (s -> Maybe (s, a))
     comb c ta f2 =
       let
         r = _first (irAnn ta)
       in
-        elem_lms c r (_const (go_lms supply context ta))f2
+        elem_lms c r (_const (go_lms context ta))f2
