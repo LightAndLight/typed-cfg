@@ -20,6 +20,8 @@ module LMS (module LMS, Pure(..)) where
 -- interpreter or a compiler.
 import Unsafe.Coerce
 
+import Debug.Trace
+
 import qualified Control.Applicative as A
 import Control.Lens.Cons (Cons, uncons)
 import Data.List (intersect, union)
@@ -266,7 +268,6 @@ data TyError c where
   NotDisjoint :: ShowCFG c a -> ShowCFG c a -> TyError c
   Ambiguous :: ShowCFG c a -> ShowCFG c b -> TyError c
   Null :: ShowCFG c a -> TyError c
-  Guarded :: (Ty c) -> ShowCFG c a -> TyError c
   NotGuarded :: ShowCFG c a -> TyError c
 deriving instance Show c => Show (TyError c)
 
@@ -317,7 +318,7 @@ typeOf = go []
           { _null = False
           , _first = []
           , _followLast = []
-          , _guarded = False
+          , _guarded = True
           }
       in A.pure (Bot' t)
     go ctxt (Or' () f g) = do
@@ -347,19 +348,18 @@ typeOf = go []
           , _guarded = True
           }
       in A.pure (Empty' t)
-    go ctxt (Seq' () _ (Bot' ())) = go ctxt (Bot' ())
-    go ctxt (Seq' () (Bot' ()) _) = go ctxt (Bot' ())
     go ctxt (Seq' () a b) = do
       a' <- go ctxt a
       let t = cfgAnn a'
-      b' <- go ctxt b
+      -- In the paper 'guarded' means "is in [both] Gamma and Delta", so for
+      -- the RHS of Seq this is true for the entire context
+      b' <- go ((\x -> x { _guarded = True }) <$> ctxt) b
       let t' = cfgAnn b'
       if not (t .*. t')
         then Left $ Ambiguous (ShowCFG a) (ShowCFG b)
         else
         let
           t'' =
-            -- removed some redundancy implied by t .*. t'
             Ty
             { _null = False
             , _first = _first t
@@ -381,32 +381,26 @@ typeOf = go []
       in A.pure (Char' t c)
     go ctxt (Map' () f a) = do
       a' <- go ctxt a
-      A.pure (Map' (cfgAnn a') f a')
+      A.pure $ Map' (cfgAnn a') f a'
     go ctxt (Mu' () s f) = do
       -- Binding order mistake was repeated
-      res <- fix (\ty -> go (ctxt ++ [cfgAnn ty]) f)
+      res <- fix (\ty -> go (ctxt ++ [ty]) f)
       let t = cfgAnn res
       if _guarded t
         then A.pure (Mu' t s res)
         else Left $ NotGuarded (ShowCFG $ Mu' () s f)
       where
-        fix :: (Show b, Eq b) => (CFG' (Ty b) b c -> Either (TyError b) (CFG' (Ty b) b c)) -> Either (TyError b) (CFG' (Ty b) b c)
-        fix f = inner =<< typeOf (Bot' ())
+        fix f =
+          inner $
+          -- The variable starts out with guarded = False, because it is not in
+          -- both Gamma and Delta (it is only in Delta)
+          Ty { _null = False, _first = [], _followLast = [], _guarded = False }
           where
             inner input = do
-              case f input of
-                Left{} -> A.pure input
-                Right output ->
-                  if cfgAnn input == cfgAnn output
-                    then A.pure output
-                    else inner output
-            {-
-            inner input = do
               output <- f input
-              if cfgAnn input == cfgAnn output
+              if input == cfgAnn output
                 then A.pure output
-                else inner output
--}
+                else inner $ cfgAnn output
     -- My interpretation of section 3 is that guardedness doesn't matter
     -- for variable lookup
     go ctxt (Var' () n) = A.pure $ Var' (ctxt !! n) n
